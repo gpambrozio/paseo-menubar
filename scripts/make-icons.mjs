@@ -65,7 +65,7 @@ const ICONS = [
   { bucket: "needs_input", file: "needsInput", source: { kind: "lucide", name: "megaphone" } },
   { bucket: "failed", file: "failed", source: { kind: "lucide", name: "circle-x" } },
   { bucket: "attention", file: "attention", source: { kind: "lucide", name: "triangle-alert" } },
-  { bucket: "running", file: "running", source: { kind: "lucide", name: "loader-pinwheel" } },
+  { bucket: "running", file: "running", source: { kind: "lucide", name: "sport-shoe" } },
   // The Paseo mark itself: the resting state shows the app's own identity
   // rather than a workspace glyph. See the design doc for why.
   { bucket: "done", file: "done", source: { kind: "paseo-mark" } },
