@@ -2,15 +2,13 @@ import { app, clipboard, dialog, shell } from "electron";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { AgentStore } from "./daemon/agent-store.js";
-import { createHostConnection, type HostConnection } from "./daemon/host-connection.js";
+import { createHostFleet } from "./daemon/host-fleet.js";
 import {
   loadConfig,
   saveConfig,
   configPath,
   watchConfig,
-  hostsFingerprint,
   type AppConfig,
-  type HostEntry,
 } from "./config/host-config.js";
 import { hostEntryFromPairingUrl } from "./config/pairing.js";
 import { defaultDesktopAppInstalled, openAgent, openApp } from "./launch/open-agent.js";
@@ -23,7 +21,6 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   const store = new AgentStore();
-  const connections = new Map<string, HostConnection>();
   let configDir = "";
 
   function errorText(error: unknown): string {
@@ -71,96 +68,16 @@ if (!app.requestSingleInstanceLock()) {
     }
   }
 
-  let appliedFingerprint = "";
-  let pendingReconnect: Promise<void> = Promise.resolve();
-  /**
-   * The entries behind the live connections. Kept because a `TrayAgentRow`
-   * carries only a `hostId`, and both the web fallback and the per-host retry
-   * need the entry itself.
-   */
-  const appliedHosts = new Map<string, HostEntry>();
-
-  /**
-   * Rebuilds the connection fleet. Our own writes trip the config watcher, so
-   * this no-ops when the host list is unchanged rather than churning sockets.
-   */
-  async function applyHosts(config: AppConfig): Promise<void> {
-    const fingerprint = hostsFingerprint(config.hosts);
-    if (fingerprint === appliedFingerprint) return;
-    // Recorded only once the fleet is actually built. Claiming it up front
-    // meant a rebuild that died partway still looked applied, so a watcher
-    // reload could never repair it.
-    appliedFingerprint = "";
-
-    for (const connection of connections.values()) await connection.close();
-    connections.clear();
-    appliedHosts.clear();
-
-    const failures: string[] = [];
-    for (const entry of config.hosts) {
-      appliedHosts.set(entry.id, entry);
-      const failure = connectHost(entry);
-      if (failure) failures.push(failure);
-    }
-
-    appliedFingerprint = fingerprint;
-    hostEntryError =
-      failures.length > 0
-        ? `${configPath(configDir)}\n\nThese hosts could not be used:\n\n${failures.join("\n")}`
-        : null;
-    refreshConfigError();
-  }
-
-  /** Creates one host's connection. Returns a failure description, or null. */
-  function connectHost(entry: HostEntry): string | null {
-    try {
-      const connection = createHostConnection({ entry, store });
-      // Duplicate ids are rejected by the schema; this is the belt to that
-      // brace, because silently overwriting one leaks a live connection whose
-      // socket and timers nothing can ever reach again.
-      const replaced = connections.get(entry.id);
-      if (replaced) void replaced.close();
-      connections.set(entry.id, connection);
-      return null;
-    } catch (error) {
-      // One unusable entry — a hand-edited endpoint that cannot form a URL,
-      // say — must not take down every host after it. Show it as a host that
-      // exists and cannot be used, and name it in the error.
-      store.setHost(entry.id, entry.label);
-      store.setStatus(entry.id, "invalid");
-      return `${entry.label}: ${errorText(error)}`;
-    }
-  }
-
-  /**
-   * Rebuilds one host. Auth rejection disposes its client for good, so without
-   * this a password fixed on the daemon side has no recovery path short of
-   * relaunching — a reload cannot help, since the config bytes never changed.
-   */
-  async function retryHost(hostId: string): Promise<void> {
-    const entry = appliedHosts.get(hostId);
-    if (!entry) return;
-    const existing = connections.get(hostId);
-    connections.delete(hostId);
-    if (existing) await existing.close();
-    connectHost(entry);
-  }
-
-  /**
-   * Runs fleet mutations one at a time. They await every `close()`, a window
-   * far longer than the watcher's debounce, so two overlapping calls would
-   * interleave and one generation's `connections.clear()` would drop the
-   * other's live connections without closing them.
-   */
-  function serialize(task: () => Promise<void>): Promise<void> {
-    const next = pendingReconnect.then(task);
-    pendingReconnect = next.catch(() => undefined);
-    return next;
-  }
-
-  function reconnectAll(config: AppConfig): Promise<void> {
-    return serialize(() => applyHosts(config));
-  }
+  const fleet = createHostFleet({
+    store,
+    onEntryFailures: (failures) => {
+      hostEntryError =
+        failures.length > 0
+          ? `${configPath(configDir)}\n\nThese hosts could not be used:\n\n${failures.join("\n")}`
+          : null;
+      refreshConfigError();
+    },
+  });
 
   async function reloadFromDisk(): Promise<void> {
     let config: AppConfig;
@@ -174,7 +91,7 @@ if (!app.requestSingleInstanceLock()) {
     }
     configFileError = null;
     refreshConfigError();
-    await reconnectAll(config);
+    await fleet.apply(config);
   }
 
   async function addHostFromClipboard(): Promise<void> {
@@ -232,21 +149,9 @@ if (!app.requestSingleInstanceLock()) {
     });
   }
 
-  /**
-   * The daemon serves the web UI on the same endpoint it serves the socket
-   * on, so a direct host doubles as the fallback target when the desktop app
-   * is not installed. A relay host has no such URL — the relay is a socket
-   * tunnel, not an HTTP origin — so it has no fallback.
-   */
-  function webBaseUrlFor(hostId: string): string | undefined {
-    const entry = appliedHosts.get(hostId);
-    if (!entry || entry.type !== "directTcp") return undefined;
-    return `${entry.useTls ? "https" : "http"}://${entry.endpoint}`;
-  }
-
   function handleOpenAgent(row: TrayAgentRow): void {
     if (!row.serverId) return;
-    const webBaseUrl = webBaseUrlFor(row.hostId);
+    const webBaseUrl = fleet.webBaseUrlFor(row.hostId);
     openAgent(
       { serverId: row.serverId, agentId: row.agentId, ...(webBaseUrl ? { webBaseUrl } : {}) },
       { desktopAppInstalled: defaultDesktopAppInstalled, openExternal },
@@ -254,8 +159,9 @@ if (!app.requestSingleInstanceLock()) {
   }
 
   function handleOpenApp(): void {
-    const webBaseUrl = [...appliedHosts.keys()]
-      .map((hostId) => webBaseUrlFor(hostId))
+    const webBaseUrl = fleet
+      .hostIds()
+      .map((hostId) => fleet.webBaseUrlFor(hostId))
       .find((url) => url !== undefined);
     openApp({ webBaseUrl }, { desktopAppInstalled: defaultDesktopAppInstalled, openExternal });
   }
@@ -275,9 +181,9 @@ if (!app.requestSingleInstanceLock()) {
             onOpenAgent: handleOpenAgent,
             onOpenApp: handleOpenApp,
             onRetryHost: (hostId) =>
-              void serialize(() => retryHost(hostId)).catch((error) =>
-                showError("Paseo Icon — could not reconnect", error),
-              ),
+              void fleet
+                .retry(hostId)
+                .catch((error) => showError("Paseo Icon — could not reconnect", error)),
             onAddHostFromClipboard: () =>
               void addHostFromClipboard().catch((error) =>
                 showError("Paseo Icon — could not add host", error),
@@ -308,11 +214,11 @@ if (!app.requestSingleInstanceLock()) {
       app.on("before-quit", () => {
         stopWatching();
         presenter.dispose();
-        for (const connection of connections.values()) void connection.close();
+        fleet.closeAll();
       });
 
       try {
-        await reconnectAll(await ensureConfig());
+        await fleet.apply(await ensureConfig());
       } catch (error) {
         // Connecting to configured hosts failed. The tray is already up and
         // keeps running -- a tray showing zero connected hosts is the
