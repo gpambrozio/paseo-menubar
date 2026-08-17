@@ -45,39 +45,20 @@ function rowItem(row: TrayWorkspaceRow, handlers: MenuHandlers): MenuItemConstru
 }
 
 /**
- * The heading for one section, then its rows. No submenus: the sidebar puts
+ * A disabled heading, then the section's rows. No submenus: the sidebar puts
  * every bucket at the same level, and a submenu would hide one section behind a
  * hover the other four do not need.
  *
  * The heading carries the bucket's icon, matching the sidebar, which shows a
  * glyph per section.
- *
- * `type: "header"` is AppKit's own section heading, which reads as a heading
- * rather than as a command someone disabled. It needs macOS 14, so where it is
- * unavailable the heading falls back to a disabled item -- the same text in the
- * same place, just greyed. Electron exposes no way to style a menu item's text,
- * so this native type is the only way to make a heading look like one.
  */
-function headingItem(
-  section: TrayMenuSection,
-  iconFor: IconResolver,
-  supportsHeaderItems: boolean,
-): MenuItemConstructorOptions {
-  const label = SECTION_LABELS[section.bucket];
-  const icon = iconFor(section.bucket);
-  return supportsHeaderItems
-    ? { label, type: "header", icon }
-    : { label, enabled: false, icon };
-}
-
 function sectionItems(
   section: TrayMenuSection,
   handlers: MenuHandlers,
   iconFor: IconResolver,
-  supportsHeaderItems: boolean,
 ): MenuItemConstructorOptions[] {
   const items: MenuItemConstructorOptions[] = [
-    headingItem(section, iconFor, supportsHeaderItems),
+    { label: SECTION_LABELS[section.bucket], enabled: false, icon: iconFor(section.bucket) },
     ...section.rows.map((row) => rowItem(row, handlers)),
   ];
   if (section.overflow > 0) {
@@ -90,12 +71,7 @@ function sectionItems(
 export function buildMenuTemplate(
   model: TrayViewModel,
   handlers: MenuHandlers,
-  options: {
-    loginItemEnabled: boolean;
-    iconFor: IconResolver;
-    /** macOS 14 and up. See `headingItem`. */
-    supportsHeaderItems: boolean;
-  },
+  options: { loginItemEnabled: boolean; iconFor: IconResolver },
 ): MenuItemConstructorOptions[] {
   const items: MenuItemConstructorOptions[] = [];
 
@@ -115,9 +91,7 @@ export function buildMenuTemplate(
     items.push({ label: "No workspaces", enabled: false });
   } else {
     for (const section of model.sections) {
-      items.push(
-        ...sectionItems(section, handlers, options.iconFor, options.supportsHeaderItems),
-      );
+      items.push(...sectionItems(section, handlers, options.iconFor));
     }
   }
 

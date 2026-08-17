@@ -1,5 +1,4 @@
 import { Menu, Tray, nativeImage } from "electron";
-import os from "node:os";
 import path from "node:path";
 import type { WorkspaceStateBucket } from "@getpaseo/protocol/messages";
 import type { HostStore } from "../daemon/host-store.js";
@@ -7,19 +6,6 @@ import { buildMenuTemplate, type MenuHandlers } from "./menu-template.js";
 import { deriveTrayViewModel, ICON_FILE_PREFIXES, type TrayIconState } from "./view-model.js";
 
 const REBUILD_DEBOUNCE_MS = 120;
-
-/** macOS 14 Sonoma, the first release with native menu section headings. */
-const MIN_DARWIN_MAJOR_FOR_HEADER_ITEMS = 23;
-
-/**
- * Electron's `type: "header"` needs macOS 14. Darwin's major version is the
- * reliable check: Darwin 23 is macOS 14, 24 is 15, and so on.
- */
-function supportsHeaderItems(): boolean {
-  if (process.platform !== "darwin") return false;
-  const major = Number.parseInt(os.release().split(".")[0] ?? "", 10);
-  return Number.isFinite(major) && major >= MIN_DARWIN_MAJOR_FOR_HEADER_ITEMS;
-}
 
 export interface TrayPresenter {
   dispose(): void;
@@ -32,8 +18,6 @@ export function createTrayPresenter(options: {
   isLoginItemEnabled: () => boolean;
 }): TrayPresenter {
   const { store, assetsDir, handlers, isLoginItemEnabled } = options;
-  // The OS does not change under a running app, so this is resolved once.
-  const headerItemsSupported = supportsHeaderItems();
 
   function iconPath(bucket: WorkspaceStateBucket): string {
     return path.join(assetsDir, `${ICON_FILE_PREFIXES[bucket]}Template.png`);
@@ -76,7 +60,6 @@ export function createTrayPresenter(options: {
         buildMenuTemplate(model, handlers, {
           loginItemEnabled: isLoginItemEnabled(),
           iconFor: iconPath,
-          supportsHeaderItems: headerItemsSupported,
         }),
       ),
     );

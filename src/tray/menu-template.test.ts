@@ -7,10 +7,8 @@ import { buildMenuTemplate } from "./menu-template.js";
 /** A predictable, non-filesystem stand-in for tray-presenter's real resolver. */
 const iconFor = vi.fn((bucket: WorkspaceStateBucket) => `icon:${bucket}`);
 
-function menuOptions(
-  overrides: { loginItemEnabled?: boolean; supportsHeaderItems?: boolean } = {},
-) {
-  return { loginItemEnabled: false, iconFor, supportsHeaderItems: true, ...overrides };
+function menuOptions(overrides: { loginItemEnabled?: boolean } = {}) {
+  return { loginItemEnabled: false, iconFor, ...overrides };
 }
 
 /** Invokes a menu item's handler; the real signature's arguments are unused. */
@@ -76,9 +74,7 @@ describe("buildMenuTemplate", () => {
       ],
     };
     const template = buildMenuTemplate(model, handlers, menuOptions());
-    // Headings are the header-typed items; host status lines are also disabled,
-    // so `enabled === false` would not distinguish them once hosts are present.
-    const headings = template.filter((i) => i.type === "header").map((i) => i.label);
+    const headings = template.filter((i) => i.enabled === false).map((i) => i.label);
     expect(headings).toEqual([
       "Needs input",
       "Failed",
@@ -114,36 +110,6 @@ describe("buildMenuTemplate", () => {
     // Rows are workspaces, not sections -- only the heading gets a bucket icon.
     const row1 = template.find((i) => i.label?.includes("fix-login"));
     expect(row1?.icon).toBeUndefined();
-  });
-
-  it("marks section headings as native headers where the OS supports them", () => {
-    const model: TrayViewModel = {
-      ...empty,
-      sections: [{ bucket: "needs_input", rows: [row()], overflow: 0 }],
-    };
-    const heading = buildMenuTemplate(model, handlers, menuOptions()).find(
-      (i) => i.label === "Needs input",
-    );
-    expect(heading?.type).toBe("header");
-    // A header is not a command someone disabled, so it must not also be marked
-    // disabled -- that is the styling this replaced.
-    expect(heading?.enabled).toBeUndefined();
-  });
-
-  it("falls back to a disabled heading before macOS 14, keeping text and icon", () => {
-    const model: TrayViewModel = {
-      ...empty,
-      sections: [{ bucket: "needs_input", rows: [row()], overflow: 0 }],
-    };
-    const heading = buildMenuTemplate(
-      model,
-      handlers,
-      menuOptions({ supportsHeaderItems: false }),
-    ).find((i) => i.label === "Needs input");
-    expect(heading?.type).toBeUndefined();
-    expect(heading?.enabled).toBe(false);
-    // The fallback still reads as a section: same text, same glyph, same place.
-    expect(heading?.icon).toBe(iconFor("needs_input"));
   });
 
   it("renders a workspace row with its project and host, and opens it on click", () => {
