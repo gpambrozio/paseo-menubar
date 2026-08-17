@@ -118,7 +118,6 @@ describe("host fleet serialization", () => {
     ]);
     // Only the last generation is still live; everything else was closed once.
     expect(connections.leaked()).toEqual(["c1", "c2"]);
-    expect(fleet.hostIds()).toEqual(["c1", "c2"]);
     expect(store.snapshot().map((host) => host.hostId)).toEqual(["c1", "c2"]);
   });
 
@@ -134,7 +133,6 @@ describe("host fleet serialization", () => {
     // The retry saw the fleet the apply left behind: h1 is gone from it, so
     // there is nothing to retry and no fourth connection.
     expect(connections.ids()).toEqual(["h1", "h2"]);
-    expect(fleet.hostIds()).toEqual(["h2"]);
     expect(store.snapshot().map((host) => host.hostId)).toEqual(["h2"]);
   });
 });
@@ -204,14 +202,14 @@ describe("host fleet fingerprint guard", () => {
 
   it("re-applies when the host list changes", async () => {
     const connections = createFakeConnections();
-    const { fleet } = createFleet(connections);
+    const { fleet, store } = createFleet(connections);
 
     await fleet.apply(config(directEntry("h1")));
     await fleet.apply(config(directEntry("h1", { endpoint: "127.0.0.1:7000" })));
 
     expect(connections.ids()).toEqual(["h1", "h1"]);
     expect(connections.leaked()).toEqual(["h1"]);
-    expect(fleet.hostIds()).toEqual(["h1"]);
+    expect(store.snapshot().map((host) => host.hostId)).toEqual(["h1"]);
   });
 
   it("re-applies after a rebuild that threw partway", async () => {
@@ -340,6 +338,39 @@ describe("host fleet web base URLs", () => {
 
     expect(fleet.webBaseUrlFor("h1")).toBeUndefined();
     expect(fleet.webBaseUrlFor("h2")).toBe("http://127.0.0.1:6767");
+  });
+});
+
+describe("host fleet web fallback", () => {
+  it("picks the first live direct host in config order, skipping a relay", async () => {
+    const connections = createFakeConnections();
+    const { fleet } = createFleet(connections);
+
+    await fleet.apply(config(relayEntry, directEntry("h1", { endpoint: "192.168.1.4:6767" })));
+
+    expect(fleet.firstWebBaseUrl()).toBe("http://192.168.1.4:6767");
+  });
+
+  it("skips a host whose entry never became a live connection", async () => {
+    // "bad" has a perfectly good directTcp endpoint -- it fails to build a
+    // client for some other reason -- so its entry sits in `appliedHosts`
+    // with a URL `webBaseUrlFor` would happily compute. Offering that URL
+    // would send the user to a host that never connected.
+    const connections = createFakeConnections({ failOn: ["bad"] });
+    const { fleet } = createFleet(connections);
+
+    await fleet.apply(config(directEntry("bad"), directEntry("good", { endpoint: "10.0.0.9:6767" })));
+
+    expect(fleet.firstWebBaseUrl()).toBe("http://10.0.0.9:6767");
+  });
+
+  it("returns undefined when no host is both live and a direct connection", async () => {
+    const connections = createFakeConnections({ failOn: ["bad"] });
+    const { fleet } = createFleet(connections);
+
+    await fleet.apply(config(directEntry("bad"), relayEntry));
+
+    expect(fleet.firstWebBaseUrl()).toBeUndefined();
   });
 });
 

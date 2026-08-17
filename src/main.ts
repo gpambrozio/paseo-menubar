@@ -100,11 +100,10 @@ if (!app.requestSingleInstanceLock()) {
       }
 
       function handleOpenApp(): void {
-        const webBaseUrl = fleet
-          .hostIds()
-          .map((hostId) => fleet.webBaseUrlFor(hostId))
-          .find((url) => url !== undefined);
-        openApp({ webBaseUrl }, { desktopAppInstalled: defaultDesktopAppInstalled, openExternal });
+        openApp(
+          { webBaseUrl: fleet.firstWebBaseUrl() },
+          { desktopAppInstalled: defaultDesktopAppInstalled, openExternal },
+        );
       }
 
       let presenter: TrayPresenter;

@@ -13,8 +13,15 @@ export interface HostFleet {
   retry(hostId: string): Promise<void>;
   /** The base URL of the host's own web UI, when it has one. */
   webBaseUrlFor(hostId: string): string | undefined;
-  /** The ids of the entries behind the live connections, in config order. */
-  hostIds(): string[];
+  /**
+   * The web UI of the first live, connectable host, in config order — the
+   * fallback used to open Paseo when the desktop app is not installed.
+   * Skips hosts whose entry never became a live connection (shown as
+   * `invalid` in the tray): their endpoint has never answered, so offering
+   * it as the fallback would send the user to a host we already know is
+   * unreachable.
+   */
+  firstWebBaseUrl(): string | undefined;
   /** Fire-and-forget teardown for app shutdown. */
   closeAll(): void;
 }
@@ -92,6 +99,17 @@ export function createHostFleet(options: {
   }
 
   /**
+   * The daemon serves the web UI on the same endpoint it serves the socket
+   * on, so a direct host doubles as the fallback target when the desktop app
+   * is not installed. A relay host has no such URL — the relay is a socket
+   * tunnel, not an HTTP origin — so it has no fallback.
+   */
+  function webBaseUrlForEntry(entry: HostEntry): string | undefined {
+    if (entry.type !== "directTcp") return undefined;
+    return `${entry.useTls ? "https" : "http"}://${entry.endpoint}`;
+  }
+
+  /**
    * Creates one host's connection, recording a failure description under
    * `entry.id` when it cannot.
    *
@@ -121,6 +139,13 @@ export function createHostFleet(options: {
       // One unusable entry — a hand-edited endpoint that cannot form a URL,
       // say — must not take down every host after it. Show it as a host that
       // exists and cannot be used, and name it in the error.
+      //
+      // The duplicate-id guard above throws into this same catch, and on
+      // that path `entry.id` already belongs to the first, live connection —
+      // so these two calls relabel *that* host and drop its status to
+      // `invalid` until its own status callback flips it back. Unreachable
+      // in practice, per the guard's own comment, and nothing leaks, but
+      // worth naming so the next reader does not have to re-derive it.
       store.setHost(entry.id, entry.label);
       store.setStatus(entry.id, "invalid");
       entryFailures.set(entry.id, `${entry.label}: ${errorText(error)}`);
@@ -167,19 +192,20 @@ export function createHostFleet(options: {
     retry(hostId) {
       return serialize(() => retryHost(hostId));
     },
-    /**
-     * The daemon serves the web UI on the same endpoint it serves the socket
-     * on, so a direct host doubles as the fallback target when the desktop app
-     * is not installed. A relay host has no such URL — the relay is a socket
-     * tunnel, not an HTTP origin — so it has no fallback.
-     */
     webBaseUrlFor(hostId) {
       const entry = appliedHosts.get(hostId);
-      if (!entry || entry.type !== "directTcp") return undefined;
-      return `${entry.useTls ? "https" : "http"}://${entry.endpoint}`;
+      return entry ? webBaseUrlForEntry(entry) : undefined;
     },
-    hostIds() {
-      return [...appliedHosts.keys()];
+    firstWebBaseUrl() {
+      for (const [hostId, entry] of appliedHosts) {
+        // A failed entry stays in `appliedHosts` (it is recorded before
+        // `connectHost` is attempted) but never gets a live connection, so
+        // `connections` is the source of truth for "actually reachable".
+        if (!connections.has(hostId)) continue;
+        const url = webBaseUrlForEntry(entry);
+        if (url !== undefined) return url;
+      }
+      return undefined;
     },
     closeAll() {
       for (const connection of connections.values()) void connection.close();
