@@ -6,6 +6,7 @@ import {
 } from "@getpaseo/protocol/daemon-endpoints";
 import type { HostEntry } from "../config/host-config.js";
 import type { AgentStore } from "./agent-store.js";
+import { errorText } from "../error-text.js";
 
 const AGENT_PAGE_LIMIT = 200;
 const SEED_RETRY_MS = 2_000;
@@ -235,8 +236,7 @@ export function createHostConnection(options: {
     // failures such as a malformed URL or a transport that fails to
     // construct. Classify the same way for consistency in case a future SDK
     // version does reject with the same reason text.
-    const message = error instanceof Error ? error.message : String(error);
-    store.setStatus(entry.id, isAuthRejection(message) ? "unauthorized" : "disconnected");
+    store.setStatus(entry.id, isAuthRejection(errorText(error)) ? "unauthorized" : "disconnected");
   });
 
   return {
