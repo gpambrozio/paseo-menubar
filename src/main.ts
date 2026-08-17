@@ -12,7 +12,7 @@ import {
 } from "./config/host-config.js";
 import { hostEntryFromPairingUrl } from "./config/pairing.js";
 import { defaultDesktopAppInstalled, openAgent } from "./launch/open-agent.js";
-import { createTrayPresenter } from "./tray/tray-presenter.js";
+import { createTrayPresenter, type TrayPresenter } from "./tray/tray-presenter.js";
 import type { TrayAgentRow } from "./tray/view-model.js";
 
 const DEFAULT_LOCAL_ENDPOINT = "127.0.0.1:6767";
@@ -117,33 +117,66 @@ if (!app.requestSingleInstanceLock()) {
     );
   }
 
-  app.whenReady().then(async () => {
-    app.dock?.hide();
-    configDir = app.getPath("userData");
+  app.whenReady()
+    .then(async () => {
+      app.dock?.hide();
+      configDir = app.getPath("userData");
 
-    const presenter = createTrayPresenter({
-      store,
-      assetsDir: path.join(app.getAppPath(), "assets", "generated"),
-      isLoginItemEnabled: () => app.getLoginItemSettings().openAtLogin,
-      handlers: {
-        onOpenAgent: handleOpenAgent,
-        onAddHostFromClipboard: () => void addHostFromClipboard(),
-        onEditConfig: () => void shell.openPath(configPath(configDir)),
-        onToggleLoginItem: (enabled) => app.setLoginItemSettings({ openAtLogin: enabled }),
-        onQuit: () => app.quit(),
-      },
+      let presenter: TrayPresenter;
+      try {
+        presenter = createTrayPresenter({
+          store,
+          assetsDir: path.join(app.getAppPath(), "assets", "generated"),
+          isLoginItemEnabled: () => app.getLoginItemSettings().openAtLogin,
+          handlers: {
+            onOpenAgent: handleOpenAgent,
+            onAddHostFromClipboard: () => void addHostFromClipboard(),
+            onEditConfig: () => void shell.openPath(configPath(configDir)),
+            onToggleLoginItem: (enabled) => app.setLoginItemSettings({ openAtLogin: enabled }),
+            onQuit: () => app.quit(),
+          },
+        });
+      } catch (error) {
+        // No tray means no way to see or control the app at all -- there is
+        // nothing to fall back to, so surface the failure and exit rather
+        // than running invisibly with no indicator and no menu.
+        dialog.showErrorBox(
+          "Paseo Icon — failed to start",
+          error instanceof Error ? error.message : String(error),
+        );
+        app.quit();
+        return;
+      }
+
+      const stopWatching = watchConfig(configDir, () => void reloadFromDisk());
+
+      app.on("before-quit", () => {
+        stopWatching();
+        presenter.dispose();
+        for (const connection of connections.values()) void connection.close();
+      });
+
+      try {
+        await reconnectAll(await ensureConfig());
+      } catch (error) {
+        // Connecting to configured hosts failed. The tray is already up and
+        // keeps running -- a tray showing zero connected hosts is the
+        // correct display for this state, not a reason to crash.
+        dialog.showErrorBox(
+          "Paseo Icon — configuration error",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    })
+    .catch((error) => {
+      // Safety net: every stage above already catches its own failures, but
+      // Node terminates the process on any unhandled rejection, and a
+      // background menu-bar app must never die silently.
+      dialog.showErrorBox(
+        "Paseo Icon — failed to start",
+        error instanceof Error ? error.message : String(error),
+      );
     });
-
-    const stopWatching = watchConfig(configDir, () => void reloadFromDisk());
-
-    app.on("before-quit", () => {
-      stopWatching();
-      presenter.dispose();
-      for (const connection of connections.values()) void connection.close();
-    });
-
-    await reconnectAll(await ensureConfig());
-  });
 
   // No windows exist, so the default quit-on-all-closed behaviour must not apply.
   app.on("window-all-closed", () => undefined);
