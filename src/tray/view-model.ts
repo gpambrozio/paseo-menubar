@@ -36,6 +36,11 @@ export interface TrayViewModel {
   count: number;
   sections: TrayMenuSection[];
   hostStatuses: TrayHostStatus[];
+  /**
+   * Labels of connected hosts with more agents than the seed page carried.
+   * The count below them is a floor, not a total, and the menu says so.
+   */
+  truncatedHosts: string[];
 }
 
 function isVisible(agent: AgentSnapshotPayload): boolean {
@@ -111,6 +116,7 @@ export function deriveTrayViewModel(hosts: HostAgents[]): TrayViewModel {
     icon,
     count: attention.length,
     sections,
+    truncatedHosts: live.filter((host) => host.truncated).map((host) => host.label),
     hostStatuses: hosts.map((host) => ({
       hostId: host.hostId,
       label: host.label,

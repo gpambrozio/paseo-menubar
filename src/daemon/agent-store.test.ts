@@ -73,6 +73,18 @@ describe("AgentStore", () => {
     expect(store.snapshot()[0]?.serverId).toBe("srv-1");
   });
 
+  it("carries the seed's truncation flag and clears it on a complete re-seed", () => {
+    const store = new AgentStore();
+    store.setHost("h1", "laptop");
+    expect(store.snapshot()[0]?.truncated).toBe(false);
+
+    store.seed("h1", [agent("a")], { truncated: true });
+    expect(store.snapshot()[0]?.truncated).toBe(true);
+
+    store.seed("h1", [agent("a")]);
+    expect(store.snapshot()[0]?.truncated).toBe(false);
+  });
+
   it("removing a host drops it entirely", () => {
     const store = new AgentStore();
     store.setHost("h1", "laptop");

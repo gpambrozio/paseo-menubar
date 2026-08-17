@@ -10,7 +10,13 @@ const handlers = {
   onQuit: vi.fn(),
 };
 
-const empty: TrayViewModel = { icon: "idle", count: 0, sections: [], hostStatuses: [] };
+const empty: TrayViewModel = {
+  icon: "idle",
+  count: 0,
+  sections: [],
+  hostStatuses: [],
+  truncatedHosts: [],
+};
 
 describe("buildMenuTemplate", () => {
   it("shows an explicit empty state", () => {
@@ -39,6 +45,7 @@ describe("buildMenuTemplate", () => {
         },
       ],
       hostStatuses: [{ hostId: "h1", label: "laptop", status: "connected" }],
+      truncatedHosts: [],
     };
     const labels = buildMenuTemplate(model, handlers, { loginItemEnabled: false }).map((i) => i.label);
     expect(labels).toContain("Needs you");
@@ -52,6 +59,12 @@ describe("buildMenuTemplate", () => {
     };
     const labels = buildMenuTemplate(model, handlers, { loginItemEnabled: false }).map((i) => i.label);
     expect(labels).toContain("…and 3 more");
+  });
+
+  it("names a host whose agent list was capped", () => {
+    const model: TrayViewModel = { ...empty, truncatedHosts: ["laptop"] };
+    const labels = buildMenuTemplate(model, handlers, { loginItemEnabled: false }).map((i) => i.label);
+    expect(labels).toContain("Not all agents shown · laptop");
   });
 
   it("puts idle agents in a submenu labelled with their count", () => {

@@ -131,6 +131,40 @@ describe("createHostConnection", () => {
     await waitFor(() => store.snapshot()[0]?.status === "disconnected");
   });
 
+  it("reports connecting again while the SDK retries a lost connection", async () => {
+    const harness = await startDaemon();
+    const store = new AgentStore();
+
+    // Record every status the store passes through: a reconnect attempt's
+    // `connecting` leg can be shorter than any polling interval, so the
+    // assertion has to see transitions, not a sampled value.
+    const seen: string[] = [];
+    store.subscribe(() => {
+      const status = store.snapshot()[0]?.status;
+      if (status && seen[seen.length - 1] !== status) seen.push(status);
+    });
+
+    const connection = createHostConnection({
+      entry: {
+        id: "h1",
+        label: "local",
+        type: "directTcp",
+        endpoint: `127.0.0.1:${harness.port}`,
+        useTls: false,
+      },
+      store,
+    });
+    cleanups.push(() => connection.close());
+
+    await waitFor(() => store.snapshot()[0]?.status === "connected");
+    const afterConnected = seen.length;
+    await harness.stop();
+
+    await waitFor(() => seen.slice(afterConnected).includes("connecting"));
+    expect(seen).toContain("connected");
+    expect(seen.slice(afterConnected)).toContain("disconnected");
+  });
+
   it("marks a wrong password unauthorized and stops retrying", async () => {
     const rightPassword = "correct-horse-battery-staple";
     const { logger, count } = createLogCounter(

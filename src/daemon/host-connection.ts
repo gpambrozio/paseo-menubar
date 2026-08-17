@@ -7,8 +7,8 @@ import {
 import type { HostEntry } from "../config/host-config.js";
 import type { AgentStore } from "./agent-store.js";
 
-const STATUS_POLL_MS = 1_000;
 const AGENT_PAGE_LIMIT = 200;
+const SEED_RETRY_MS = 2_000;
 const APP_VERSION = "0.4.0";
 
 export interface HostConnection {
@@ -83,10 +83,10 @@ export function createHostConnection(options: {
 
   const client = buildClient(entry);
   let closed = false;
-  let lastStatus: string | null = null;
-  let timer: ReturnType<typeof setInterval>;
+  let seedRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  let unsubscribeStatus: (() => void) | null = null;
 
-  const unsubscribe = client.on("agent_update", (message) => {
+  const unsubscribeAgents = client.on("agent_update", (message) => {
     const payload = message.payload;
     if (payload.kind === "upsert") {
       store.applyUpdate(entry.id, { kind: "upsert", agent: payload.agent });
@@ -96,8 +96,13 @@ export function createHostConnection(options: {
   });
 
   async function seed(): Promise<void> {
+    // No `scope`. `scope: "active"` narrows harder than the live subscription
+    // does -- it also requires a workspaceId with an unarchived workspace and
+    // project -- so the stream would be a strict superset of the seed and
+    // agents that streamed in would vanish at the next re-seed. Default scope
+    // plus the subscription's implicit `includeArchived: false` gives both
+    // sides the same rule the spec states: archived agents are excluded.
     const response = await client.fetchAgents({
-      scope: "active",
       page: { limit: AGENT_PAGE_LIMIT },
       subscribe: {},
     });
@@ -105,10 +110,46 @@ export function createHostConnection(options: {
     store.seed(
       entry.id,
       response.entries.map((item) => item.agent),
+      // Caps are visible, never silent: the page limit is a real ceiling and
+      // the menu says so rather than quietly undercounting.
+      { truncated: response.pageInfo.hasMore },
     );
     const serverId = client.getLastServerInfoMessage()?.serverId;
     if (serverId) store.setServerId(entry.id, serverId);
     store.setStatus(entry.id, "connected");
+  }
+
+  function clearSeedRetry(): void {
+    if (seedRetryTimer) {
+      clearTimeout(seedRetryTimer);
+      seedRetryTimer = null;
+    }
+  }
+
+  /**
+   * Seeds, and keeps trying while the socket stays up.
+   *
+   * A failed seed leaves a live connection with no agent list, which reports
+   * as `disconnected` because the app cannot vouch for agents it never
+   * fetched. Nothing else would ever retry: the next status transition is the
+   * only other seed trigger, and a healthy socket produces none.
+   */
+  function requestSeed(): void {
+    clearSeedRetry();
+    // Deferred so seeding never re-enters the client from inside the client's
+    // own connection-state listener.
+    queueMicrotask(() => {
+      if (closed || client.getConnectionState().status !== "connected") return;
+      void seed().catch(() => {
+        if (closed) return;
+        store.setStatus(entry.id, "disconnected");
+        if (client.getConnectionState().status !== "connected") return;
+        seedRetryTimer = setTimeout(() => {
+          seedRetryTimer = null;
+          requestSeed();
+        }, SEED_RETRY_MS);
+      });
+    });
   }
 
   /**
@@ -122,59 +163,62 @@ export function createHostConnection(options: {
   function stopRetrying(): void {
     if (closed) return;
     closed = true;
-    clearInterval(timer);
-    unsubscribe();
+    clearSeedRetry();
+    unsubscribeStatus?.();
+    unsubscribeAgents();
     void client.close().catch(() => undefined);
   }
 
-  void (async () => {
-    try {
-      await client.connect();
-      await seed();
-    } catch (error) {
-      if (closed) return;
-      // In practice DaemonClient never rejects `connect()` for an auth
-      // failure while reconnect is enabled (see the poller below, which is
-      // where that classification actually happens) — this catch covers
-      // genuine connect failures such as a malformed URL or a transport that
-      // fails to construct. Classify the same way for consistency in case a
-      // future SDK version does reject with the same reason text.
-      const message = error instanceof Error ? error.message : String(error);
-      store.setStatus(entry.id, isAuthRejection(message) ? "unauthorized" : "disconnected");
-    }
-  })();
-
-  // DaemonClient exposes no connection-state event, so transitions are polled.
-  timer = setInterval(() => {
+  // `subscribeConnectionStatus` reports every transition the client makes,
+  // including the `connecting` leg of an SDK-driven reconnect, so no timer is
+  // needed. It also fires once on subscribe with the current state (`idle`
+  // before `connect()`), which is why `idle` is ignored -- `setHost` already
+  // reports `connecting`.
+  unsubscribeStatus = client.subscribeConnectionStatus((state) => {
     if (closed) return;
-    const state = client.getConnectionState();
-    if (state.status === lastStatus) return;
-    const previous = lastStatus;
-    lastStatus = state.status;
-
-    if (state.status === "connected" && previous !== null) {
-      void seed().catch(() => store.setStatus(entry.id, "disconnected"));
-      return;
-    }
-    if (state.status === "disconnected") {
-      if (isAuthRejection(state.reason)) {
-        store.setStatus(entry.id, "unauthorized");
-        stopRetrying();
+    switch (state.status) {
+      case "connecting":
+        store.setStatus(entry.id, "connecting");
         return;
-      }
-      store.setStatus(entry.id, "disconnected");
-      return;
+      case "connected":
+        requestSeed();
+        return;
+      case "disconnected":
+        clearSeedRetry();
+        if (isAuthRejection(state.reason)) {
+          store.setStatus(entry.id, "unauthorized");
+          stopRetrying();
+          return;
+        }
+        store.setStatus(entry.id, "disconnected");
+        return;
+      case "disposed":
+        clearSeedRetry();
+        store.setStatus(entry.id, "disconnected");
+        return;
+      default:
+        return;
     }
-    if (state.status === "disposed") {
-      store.setStatus(entry.id, "disconnected");
-    }
-  }, STATUS_POLL_MS);
+  });
+
+  void client.connect().catch((error) => {
+    if (closed) return;
+    // In practice DaemonClient never rejects `connect()` for an auth failure
+    // while reconnect is enabled (the status listener above is where that
+    // classification actually happens) — this catch covers genuine connect
+    // failures such as a malformed URL or a transport that fails to
+    // construct. Classify the same way for consistency in case a future SDK
+    // version does reject with the same reason text.
+    const message = error instanceof Error ? error.message : String(error);
+    store.setStatus(entry.id, isAuthRejection(message) ? "unauthorized" : "disconnected");
+  });
 
   return {
     async close() {
       closed = true;
-      clearInterval(timer);
-      unsubscribe();
+      clearSeedRetry();
+      unsubscribeStatus?.();
+      unsubscribeAgents();
       await client.close().catch(() => undefined);
       store.removeHost(entry.id);
     },

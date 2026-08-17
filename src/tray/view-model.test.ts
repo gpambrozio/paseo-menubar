@@ -31,6 +31,7 @@ function host(agents: AgentSnapshotPayload[], overrides: Partial<HostAgents> = {
     status: "connected",
     serverId: "srv-1",
     agents,
+    truncated: false,
     ...overrides,
   };
 }
@@ -138,6 +139,21 @@ describe("deriveTrayViewModel", () => {
     const attention = model.sections.find((s) => s.kind === "attention");
     expect(attention?.rows).toHaveLength(15);
     expect(attention?.overflow).toBe(3);
+  });
+
+  it("names hosts whose agent list was capped so the count is never a silent floor", () => {
+    const model = deriveTrayViewModel([
+      host([agent("a")], { truncated: true }),
+      host([], { hostId: "h2", label: "studio", truncated: false }),
+    ]);
+    expect(model.truncatedHosts).toEqual(["laptop"]);
+  });
+
+  it("ignores truncation on a host whose agents are excluded anyway", () => {
+    const model = deriveTrayViewModel([
+      host([agent("a")], { status: "disconnected", truncated: true }),
+    ]);
+    expect(model.truncatedHosts).toEqual([]);
   });
 
   it("reports host connection state for the status footer", () => {

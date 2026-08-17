@@ -13,6 +13,8 @@ export interface HostAgents {
   status: HostStatus;
   serverId: string | null;
   agents: AgentSnapshotPayload[];
+  /** The host has more agents than the seed page could carry. */
+  truncated: boolean;
 }
 
 interface HostEntryState {
@@ -20,6 +22,7 @@ interface HostEntryState {
   status: HostStatus;
   serverId: string | null;
   agents: Map<string, AgentSnapshotPayload>;
+  truncated: boolean;
 }
 
 export class AgentStore {
@@ -36,6 +39,7 @@ export class AgentStore {
         status: "connecting",
         serverId: null,
         agents: new Map(),
+        truncated: false,
       });
     }
     this.emit();
@@ -60,10 +64,15 @@ export class AgentStore {
   }
 
   /** Replaces the host's agents wholesale. Called on connect and on every reconnect. */
-  seed(hostId: string, agents: AgentSnapshotPayload[]): void {
+  seed(
+    hostId: string,
+    agents: AgentSnapshotPayload[],
+    options: { truncated?: boolean } = {},
+  ): void {
     const host = this.hosts.get(hostId);
     if (!host) return;
     host.agents = new Map(agents.map((entry) => [entry.id, entry]));
+    host.truncated = options.truncated === true;
     this.emit();
   }
 
@@ -85,6 +94,7 @@ export class AgentStore {
       status: host.status,
       serverId: host.serverId,
       agents: [...host.agents.values()],
+      truncated: host.truncated,
     }));
   }
 

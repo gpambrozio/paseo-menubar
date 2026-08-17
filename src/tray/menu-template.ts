@@ -72,6 +72,12 @@ export function buildMenuTemplate(
     for (const section of model.sections) items.push(...sectionItems(section, handlers));
   }
 
+  // The seed page has a ceiling. Reaching it means the count is a floor, and
+  // a floor presented as a total is the silent cap the spec forbids.
+  for (const label of model.truncatedHosts) {
+    items.push({ label: `Not all agents shown · ${label}`, enabled: false });
+  }
+
   if (model.hostStatuses.length > 0) {
     items.push({ type: "separator" });
     for (const host of model.hostStatuses) {
