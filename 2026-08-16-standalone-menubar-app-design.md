@@ -95,16 +95,24 @@ config file ──> HostConnection (one per host) ──> AgentStore ──> vie
 | `src/main.ts` | Wiring only. No logic. |
 | `src/config/host-config.ts` | Read, write, and watch `config.json`. |
 | `src/config/pairing.ts` | Pairing URL to host entry. |
+| `src/config/config-session.ts` | Owns the config lifecycle: first-run seed, reload, add-host, and which of the two errors wins. Electron-free. |
 | `src/daemon/host-connection.ts` | One host: connect, seed, subscribe, reconnect, report status. |
+| `src/daemon/host-fleet.ts` | Owns the set of connections: apply a config, isolate a bad entry, retry a host, serialize rebuilds. Electron-free. |
 | `src/daemon/agent-store.ts` | Replicated map keyed by `serverId:agentId`. Pure. |
 | `src/tray/view-model.ts` | Store state to icon, count, and menu sections. Pure. |
 | `src/tray/menu-template.ts` | View model to Electron menu template. Pure. |
 | `src/tray/tray-presenter.ts` | Applies the view model to an Electron `Tray`. |
 | `src/launch/open-agent.ts` | Deep link, with a browser fallback. |
+| `src/error-text.ts` | The message to show for a thrown value. |
 
 Electron appears in two modules. Everything that can be gotten wrong — counting,
 ordering, grouping, icon selection — is pure TypeScript that tests without an Electron
 harness.
+
+`config-session.ts` and `host-fleet.ts` were not in the original design. They exist
+because the first cut put their logic in `main.ts`, where nothing could test it. Both take
+their collaborators by injection for that reason, and the rule they enforce is the one
+above: if it does not touch Electron, it does not belong in `main.ts`.
 
 Menu rebuilds coalesce on a short timer so a burst of `agent_update` messages rebuilds
 once.
