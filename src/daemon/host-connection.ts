@@ -166,10 +166,11 @@ export function createHostConnection(options: {
   /**
    * Ends the reconnect loop for good (used once the host is classified
    * unauthorized). A wrong password retried behind backoff forever is the
-   * failure mode to avoid, so this stops polling and disposes the client
+   * failure mode to avoid, so this stops listening and disposes the client
    * rather than leaving it to keep reconnecting underneath a `disconnected`
    * status. Does not remove the host from the store — it stays visible with
-   * `"unauthorized"` until the caller explicitly calls `close()`.
+   * `"unauthorized"` until the caller calls `close()` or the menu's retry
+   * rebuilds the connection.
    */
   function stopRetrying(): void {
     if (closed) return;
