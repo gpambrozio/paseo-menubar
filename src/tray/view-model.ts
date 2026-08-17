@@ -141,7 +141,34 @@ export function resolveHostName(host: {
   serverId: string | null;
   endpointHint: string;
 }): string {
-  return host.label ?? host.hostname ?? host.serverId ?? host.endpointHint;
+  return host.label ?? shortenHostname(host.hostname) ?? host.serverId ?? host.endpointHint;
+}
+
+/** mDNS and default-domain suffixes, longest first so `.localdomain` wins. */
+const HOSTNAME_SUFFIXES = [".localdomain", ".local"] as const;
+
+/**
+ * Drops the trailing `.local` / `.localdomain` a machine reports over mDNS:
+ * `build-box.local` is the same machine as `build-box`, and the suffix is an artifact
+ * of how the name is announced rather than anything the user chose. Only the
+ * daemon-reported hostname goes through here -- an explicit `label` is rendered
+ * verbatim, because a user who types `foo.local` means it.
+ *
+ * Returns null when stripping would leave nothing, so a host named exactly
+ * `.local` falls through to the next tier instead of rendering as an empty row.
+ */
+function shortenHostname(hostname: string | null): string | null {
+  if (hostname === null) return null;
+  // A fully-qualified name may carry the DNS root dot; it is not part of the label.
+  const trimmed = hostname.replace(/\.$/, "");
+  const lowered = trimmed.toLowerCase();
+  for (const suffix of HOSTNAME_SUFFIXES) {
+    if (lowered.endsWith(suffix)) {
+      const shortened = trimmed.slice(0, -suffix.length);
+      return shortened.length > 0 ? shortened : null;
+    }
+  }
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 /**

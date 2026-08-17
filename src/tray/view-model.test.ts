@@ -328,6 +328,36 @@ describe("resolveHostName", () => {
     // request; nothing about a live hostname should ever displace it.
     expect(resolveHostName(tiers({ label: "Local", hostname: "build-box.local" }))).toBe("Local");
   });
+
+  it("drops the mDNS suffix a machine announces itself with", () => {
+    const shorten = (hostname: string) => resolveHostName(tiers({ label: undefined, hostname }));
+    expect(shorten("build-box.local")).toBe("build-box");
+    expect(shorten("build-box.localdomain")).toBe("build-box");
+    expect(shorten("AI-MBP.LOCAL")).toBe("AI-MBP");
+    // A fully-qualified name may carry the DNS root dot.
+    expect(shorten("build-box.local.")).toBe("build-box");
+  });
+
+  it("strips the suffix only at the end, and only as a whole label", () => {
+    const shorten = (hostname: string) => resolveHostName(tiers({ label: undefined, hostname }));
+    // Not a suffix: the machine is simply named this.
+    expect(shorten("mylocal")).toBe("mylocal");
+    // Not at the end: a real domain that happens to contain the word.
+    expect(shorten("box.local.example.com")).toBe("box.local.example.com");
+    // `.localdomain` must win over `.local`, or the result keeps a stray `domain`.
+    expect(shorten("box.localdomain")).toBe("box");
+  });
+
+  it("falls through rather than rendering an empty name", () => {
+    // A host announcing itself as exactly ".local" would shorten to nothing.
+    expect(resolveHostName(tiers({ label: undefined, hostname: ".local" }))).toBe("srv-id");
+    expect(resolveHostName(tiers({ label: undefined, hostname: "" }))).toBe("srv-id");
+  });
+
+  it("renders an explicit label verbatim, suffix and all", () => {
+    // A user who types `foo.local` means it; only the reported hostname is shortened.
+    expect(resolveHostName(tiers({ label: "foo.local" }))).toBe("foo.local");
+  });
 });
 
 describe("deriveTrayViewModel host naming", () => {
@@ -336,7 +366,7 @@ describe("deriveTrayViewModel host naming", () => {
       host([], { label: undefined, hostname: "build-box.local", serverId: "srv_example" }),
     ]);
     expect(model.hostStatuses).toEqual([
-      { hostId: "h1", label: "build-box.local", status: "connected" },
+      { hostId: "h1", label: "build-box", status: "connected" },
     ]);
   });
 
@@ -357,7 +387,7 @@ describe("deriveTrayViewModel host naming", () => {
         workspacesTruncated: true,
       }),
     ]);
-    expect(model.truncatedHosts).toEqual(["build-box.local"]);
+    expect(model.truncatedHosts).toEqual(["build-box"]);
   });
 
   it("uses the resolved name for the per-row host label with more than one host", () => {
@@ -365,7 +395,7 @@ describe("deriveTrayViewModel host naming", () => {
       host([workspace("w1")], { label: undefined, hostname: "build-box.local" }),
       host([], { hostId: "h2", label: "studio", serverId: "srv-2" }),
     ]);
-    expect(model.sections[0]?.rows[0]?.hostLabel).toBe("build-box.local");
+    expect(model.sections[0]?.rows[0]?.hostLabel).toBe("build-box");
   });
 });
 
