@@ -43,7 +43,7 @@ injection, and is tested without an Electron harness.
 | `src/daemon/host-connection.ts` | One host: connect, seed, subscribe, reconnect, report status. **All SDK use lives here.** |
 | `src/daemon/host-fleet.ts` | The set of connections: apply a config, isolate a bad entry, retry, serialize rebuilds. |
 | `src/daemon/host-store.ts` | Replicated workspaces and agents, keyed by host. |
-| `src/tray/view-model.ts` | Store state to icon, count, sections, and click targets. |
+| `src/tray/view-model.ts` | Store state to icon, count, sections, click targets, and host display names. |
 | `src/tray/menu-template.ts` | View model to Electron menu template. |
 | `src/launch/open-paseo.ts` | Deep link, with a browser fallback. |
 
@@ -82,7 +82,7 @@ injection, and is tested without an Electron harness.
 
 ```bash
 SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm install   # Homebrew libvips breaks sharp's prebuild
-npx vitest run                              # 139 tests, 9 files
+npx vitest run                              # 160 tests, 9 files
 npm run typecheck
 ```
 

@@ -2,7 +2,9 @@
 
 Status: implemented. Approved 2026-08-16; amended 2026-08-16 when the unit changed
 from agents to workspaces; amended 2026-08-17 when the icon set changed from a
-three-state hand-drawn scheme to one icon per status bucket.
+three-state hand-drawn scheme to one icon per status bucket; amended 2026-08-17 when
+`label` became optional and host names started falling through to the daemon's live
+hostname — see [Host naming](#host-naming).
 
 Relationship to the desktop tray design, which lives outside this repository at
 `paseo/docs/superpowers/specs/2026-08-16-desktop-tray-agent-status-design.md`:
@@ -281,18 +283,42 @@ directory and this app does not own it.
 
 Host entries reuse published schemas instead of parallel ones. Direct entries are a
 `DirectTcpHostConnectionSchema` from `@getpaseo/protocol/host-connection-schema`; relay
-entries are a `ConnectionOffer` plus a label. The file is written `0600` because it
-holds TCP passwords and relay keys. Paseo already keeps those unencrypted in
+entries are a `ConnectionOffer` plus an optional label. The file is written `0600`
+because it holds TCP passwords and relay keys. Paseo already keeps those unencrypted in
 localStorage, so this is not a regression, but a file is greppable and restrictive
 permissions are the minimum bar.
 
 First run needs no configuration. The app probes `localhost:6767` and adds a daemon
-that answers. Remote hosts are added by copying the URL from `paseo daemon pair` and
-choosing `Add host from clipboard…`, which parses it, shows a native confirmation
-dialog naming the host, and writes the entry. `Edit configuration…` opens the file for
-anything else.
+that answers, seeded with the label `Local` by explicit user request — that label wins
+over anything the daemon reports about itself, by the same rule below. Remote hosts are
+added by copying the URL from `paseo daemon pair` and choosing `Add host from
+clipboard…`, which parses it, shows a native confirmation dialog naming the host, and
+writes the entry. `Edit configuration…` opens the file for anything else.
 
 Config changes apply live, debounced.
+
+### Host naming
+
+`label` is optional, on both host shapes. Pairing does not fill it in: writing the
+serverId into an unnamed host's `label` would pin that value forever, and a config that
+never distinguishes "the user named this" from "nothing else was known yet" cannot let
+a live hostname take over once one arrives. `resolveHostName` in
+`src/tray/view-model.ts`, a pure function over one host's snapshot, is where every
+display name comes from, in this order:
+
+1. `label` — the user's explicit name, from `config.json`.
+2. `hostname` — the daemon's own hostname, carried into the store the same way
+   `serverId` is, from the `hostname` field on `server_info`.
+3. `serverId` — the daemon's stable identifier, once a connection has been made.
+4. The entry's own connection endpoint — a direct host's `endpoint`, or a relay host's
+   `relay.endpoint`. Last resort, for the window between an entry being read from
+   config and its first `server_info` message, when neither of the two above exists
+   yet.
+
+Every consumer — the per-host status line, the per-row host label shown when more than
+one host is configured, and the truncation notices — renders this one resolved name.
+`menu-template.ts` never re-derives it; it renders the string the view model already
+picked.
 
 ## Failure handling
 
@@ -320,12 +346,16 @@ Unit, vitest, no Electron import:
 - `view-model`: the icon for all five buckets plus the no-workspaces case, the count's
   bucket membership including that `done` never counts, section order and omission of
   empty sections, the 15-row cap and its overflow row, `archivingAt` exclusion,
-  exclusion of a disconnected host's rows, and the click-target rule with all three
-  tiebreakers.
+  exclusion of a disconnected host's rows, the click-target rule with all three
+  tiebreakers, and `resolveHostName`'s four-tier precedence — each tier arranged with a
+  distinct value so a dropped or reordered tier picks a different string than the one
+  asserted, including a pin on the seeded `Local` host staying `Local` once a hostname
+  arrives.
 - `menu-template`: the five section labels, flatness, row composition, every cap row,
   and the section heading's icon resolving through the injected `iconFor` rather than
   the module touching the filesystem itself.
-- `pairing`: valid offer URL, malformed fragment, absent fragment.
+- `pairing`: valid offer URL, malformed fragment, absent fragment, and that an unnamed
+  host leaves `label` absent rather than filling it with the serverId.
 
 Every click-target case is arranged so the tiebreakers would pick a *different* agent
 than the rule under test. The first cut was not, and three tests passed against the
@@ -335,7 +365,10 @@ Integration:
 
 - `host-connection` against a real daemon started in-process from
   `@getpaseo/server@0.4.0`: initial seed of both lists, live update, disconnect,
-  reconnect.
+  reconnect, and that a real `server_info` message's `hostname` reaches the store (the
+  daemon is started with `hostnames: true`; the assertion checks for a non-empty string
+  rather than a specific value, since the hostname belongs to whatever machine runs the
+  test).
 
 Manual: no automated harness can see a tray. Release evidence is screenshots of all
 five icon states on macOS, plus the same on Windows and each Linux desktop that ships.
