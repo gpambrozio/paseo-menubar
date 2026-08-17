@@ -113,5 +113,17 @@ narrating a check you did not perform.
   sorts last and goes first. Closing this needs a daemon-side sort key. The cap stays
   visible in the menu, so nothing is lost silently.
 - The `addHost` save-failure test assumes a non-root runner.
-- `appId` and `publish.owner` in `electron-builder.yml` are unconfirmed, and `notarize` is
-  off. All three need a decision before distributing to anyone else.
+- The `release` workflow neither signs nor publishes. `appId`, `publish.owner`, and
+  `notarize: true` are settled, and a local `npm run dist` signs and notarizes both the
+  `.app` and the dmg from the maintainer's keychain — but the repo has no Actions secrets,
+  so a `v*` tag push fails at the notarize step. Uploading is manual for a second reason:
+  electron-builder publishes each artifact as it finishes, which is before
+  `scripts/notarize-dmg.mjs` can staple the dmg, so `--publish always` would ship an image
+  Gatekeeper rejects. Closing this needs the five secrets *and* a publish step ordered
+  after stapling.
+- Releases are `arm64` only — `npm run dist` builds for the host arch, so there is no
+  Intel or universal artifact.
+- `latest-mac.yml` refers to the artifacts with hyphens (`Paseo-Icon-…`) while the files on
+  disk have a space (`Paseo Icon-…`); electron-builder's own publisher renames them, a
+  manual upload does not. Nothing reads that file yet — there is no auto-updater — but a
+  hand-upload should rename to match.

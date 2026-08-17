@@ -15,3 +15,16 @@ tray icon sizes.
 `scripts/make-icons.mjs` rasterizes it into `generated/doneTemplate.png` for
 the `done` bucket — see the design doc for why the app's own mark is the icon
 for its resting state.
+
+`paseo-app-icon.svg` is vendored from the same repo,
+`packages/website/public/favicon.svg`, and is the tile-and-mark form the caveat
+above warns off for tray use: a black rounded square behind the mark. That is
+exactly right for an app icon and wrong for a template image, so the two files
+stay separate rather than one being derived from the other.
+
+`scripts/make-icons.mjs` renders it into `generated/icon.png` at 1024px with a
+red notification badge over the bottom-right corner, and `electron-builder.yml`
+points `mac.icon` at that file. The badge is the only thing distinguishing this
+icon from Paseo's own app icon, which is the intent — same family, and the dot
+says "indicator". `generated/icon.png` is build input, not a runtime asset, so
+`electron-builder.yml` excludes it from the packaged app.

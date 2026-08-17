@@ -7,11 +7,18 @@ on:
 jobs:
   macos:
     runs-on: macos-14
-    # The default GITHUB_TOKEN is read-only on repos created since Feb 2023.
-    # The publish step below needs write access to create the release and
-    # upload assets.
     permissions:
       contents: write
+    env:
+      # `notarize: true` and `dmg.sign: true` make signing mandatory, so without
+      # credentials the packaging step can only fail -- and a red run on a tag
+      # says "the release is broken" when the real state is "the release was
+      # built by hand". Skip that step instead, and keep typecheck and tests
+      # running so the tag still gets verified.
+      #
+      # This is mapped into `env` because the `secrets` context is not available
+      # in an `if:` condition, at either job or step level.
+      HAVE_SIGNING_CREDENTIALS: ${{ secrets.CSC_LINK != '' && secrets.APPLE_ID != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -21,14 +28,37 @@ jobs:
         env:
           SHARP_IGNORE_GLOBAL_LIBVIPS: "1"
       - run: npm run typecheck && npm test
-      - run: npm run dist -- --publish always
+      # Builds and verifies; deliberately does not publish. `npm run dist` ends
+      # with the dmg notarization step, so `-- --publish always` would forward
+      # the flag to that script instead of to electron-builder -- and even
+      # spelled correctly, electron-builder uploads artifacts as it builds them,
+      # which is before the dmg has a ticket stapled. Publishing a dmg that
+      # Gatekeeper rejects is the one outcome worth failing to avoid, so the
+      # upload stays manual until it can happen after stapling.
+      - if: env.HAVE_SIGNING_CREDENTIALS == 'true'
+        run: npm run dist
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Optional codesigning identity. Unset, electron-builder produces an
-          # unsigned build that triggers Gatekeeper on install.
+          # All five are required, not optional: electron-builder.yml sets
+          # `notarize: true`, so a run without them fails instead of quietly
+          # publishing a dmg that Gatekeeper blocks. A local build on the
+          # maintainer's machine needs only the three APPLE_* vars, because the
+          # Developer ID certificate is already in that login keychain; a runner
+          # has no keychain, so it needs the certificate as a base64 .p12:
+          #
+          #   security export -t identities -f pkcs12 -k login.keychain \
+          #     -P '<export-password>' -o devid.p12
+          #   base64 -i devid.p12 | pbcopy   # -> CSC_LINK
+          #
+          # CSC_KEY_PASSWORD is that export password. APPLE_ID is the Apple
+          # account email, APPLE_APP_SPECIFIC_PASSWORD an app-specific password
+          # from appleid.apple.com (not the account password), and APPLE_TEAM_ID
+          # the 10-character team from the certificate's common name.
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          # Notarization is off (electron-builder.yml: notarize: false) until
-          # there is a confirmed Apple Developer account. Add APPLE_ID,
-          # APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID secrets here only
-          # after flipping that flag to true.
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - if: env.HAVE_SIGNING_CREDENTIALS != 'true'
+        run: |
+          echo "::notice title=Packaging skipped::No signing secrets on this repo, so the dmg was not built here. Release artifacts are built by hand with 'npm run dist' and uploaded with 'gh release upload'. See the known issues in CLAUDE.md."
