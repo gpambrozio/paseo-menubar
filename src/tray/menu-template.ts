@@ -17,6 +17,7 @@ const STATUS_TEXT: Record<HostStatus, string> = {
   connected: "connected",
   disconnected: "disconnected",
   unauthorized: "authentication failed",
+  invalid: "invalid configuration",
 };
 
 const REASON_TEXT: Record<string, string> = {

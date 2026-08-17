@@ -1,6 +1,12 @@
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 
-export type HostStatus = "connecting" | "connected" | "disconnected" | "unauthorized";
+export type HostStatus =
+  | "connecting"
+  | "connected"
+  | "disconnected"
+  | "unauthorized"
+  /** The entry itself is unusable — e.g. an endpoint that cannot form a URL. */
+  | "invalid";
 
 /** The `agent_update` payload shape, narrowed to what the store applies. */
 export type AgentUpdate =

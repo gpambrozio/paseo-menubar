@@ -2,7 +2,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import { chmod, mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { configPath, loadConfig, saveConfig, watchConfig } from "./host-config.js";
+import {
+  configPath,
+  hostsFingerprint,
+  loadConfig,
+  saveConfig,
+  watchConfig,
+  type HostEntry,
+} from "./host-config.js";
 
 const dirs: string[] = [];
 
@@ -125,6 +132,23 @@ describe("host config", () => {
     await expect(loadConfig(dir)).rejects.toThrow(/config/i);
   });
 
+  it("rejects duplicate host ids, which would leak a connection", async () => {
+    const dir = await tempDir();
+    const host = {
+      id: "same",
+      label: "laptop",
+      type: "directTcp",
+      endpoint: "127.0.0.1:6767",
+      useTls: false,
+    };
+    await writeFile(
+      configPath(dir),
+      JSON.stringify({ version: 1, hosts: [host, { ...host, endpoint: "127.0.0.1:6868" }] }),
+      "utf8",
+    );
+    await expect(loadConfig(dir)).rejects.toThrow(/Duplicate host id/);
+  });
+
   it("throws on a schema violation rather than dropping the bad host", async () => {
     const dir = await tempDir();
     await writeFile(
@@ -133,5 +157,52 @@ describe("host config", () => {
       "utf8",
     );
     await expect(loadConfig(dir)).rejects.toThrow(/config/i);
+  });
+});
+
+describe("hostsFingerprint", () => {
+  it("ignores key order, so a round-tripped entry matches a hand-built one", async () => {
+    const dir = await tempDir();
+    // The literal order the first-run seed uses, which is not schema order.
+    const seeded: HostEntry = {
+      id: "h1",
+      label: "This machine",
+      type: "directTcp",
+      endpoint: "127.0.0.1:6767",
+      useTls: false,
+    };
+    await saveConfig(dir, { version: 1, hosts: [seeded] });
+    const loaded = await loadConfig(dir);
+
+    expect(JSON.stringify(loaded.hosts)).not.toBe(JSON.stringify([seeded]));
+    expect(hostsFingerprint(loaded.hosts)).toBe(hostsFingerprint([seeded]));
+  });
+
+  it("still notices a real change, including inside a nested offer", () => {
+    const relay = (endpoint: string): HostEntry => ({
+      id: "h2",
+      type: "relay",
+      label: "studio",
+      offer: {
+        v: 2,
+        serverId: "srv-2",
+        daemonPublicKeyB64: "AAAA",
+        relay: { endpoint, useTls: true },
+      },
+    });
+    expect(hostsFingerprint([relay("a:443")])).not.toBe(hostsFingerprint([relay("b:443")]));
+  });
+
+  it("keeps host order significant", () => {
+    const host = (id: string): HostEntry => ({
+      id,
+      label: id,
+      type: "directTcp",
+      endpoint: "127.0.0.1:6767",
+      useTls: false,
+    });
+    expect(hostsFingerprint([host("a"), host("b")])).not.toBe(
+      hostsFingerprint([host("b"), host("a")]),
+    );
   });
 });

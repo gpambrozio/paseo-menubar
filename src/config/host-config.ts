@@ -23,11 +23,50 @@ const RelayHostSchema = z.object({
 export const HostEntrySchema = z.discriminatedUnion("type", [DirectHostSchema, RelayHostSchema]);
 export type HostEntry = z.infer<typeof HostEntrySchema>;
 
-export const AppConfigSchema = z.object({
-  version: z.literal(1),
-  hosts: z.array(HostEntrySchema),
-});
+export const AppConfigSchema = z
+  .object({
+    version: z.literal(1),
+    hosts: z.array(HostEntrySchema),
+  })
+  // Ids key the connection map, so a duplicate would silently leak: one entry
+  // overwrites the other, leaving an orphaned connection whose socket and
+  // subscription never stop, and two clients sharing a clientId. Copying a
+  // host block and forgetting to change the id is the most likely hand-edit,
+  // so it is rejected with a message that says what happened.
+  .superRefine((config, ctx) => {
+    const seen = new Set<string>();
+    for (const [index, host] of config.hosts.entries()) {
+      if (seen.has(host.id)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["hosts", index, "id"],
+          message: `Duplicate host id "${host.id}". Each host needs its own id.`,
+        });
+      }
+      seen.add(host.id);
+    }
+  });
 export type AppConfig = z.infer<typeof AppConfigSchema>;
+
+/**
+ * Stable identity of a host list, used to tell the app's own config writes
+ * apart from real edits.
+ *
+ * Plain `JSON.stringify` is not stable enough: zod emits keys in schema order
+ * while a hand-built entry keeps the order its literal used, so the same host
+ * stringifies two ways. On a fresh install that made the first-run seed look
+ * like a change, and the watcher tore down the connection it had just built.
+ */
+export function hostsFingerprint(hosts: HostEntry[]): string {
+  return JSON.stringify(hosts, (_key, value) => {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
+        a < b ? -1 : a > b ? 1 : 0,
+      ),
+    );
+  });
+}
 
 export function configPath(dir: string): string {
   return path.join(dir, "config.json");

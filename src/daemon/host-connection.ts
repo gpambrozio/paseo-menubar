@@ -79,9 +79,13 @@ export function createHostConnection(options: {
   store: AgentStore;
 }): HostConnection {
   const { entry, store } = options;
-  store.setHost(entry.id, entry.label);
-
+  // The client is built before the host is registered: `buildClient` throws on
+  // an endpoint that cannot form a URL, and registering first would leave a
+  // host in the store with no connection that owns it, so nothing could ever
+  // remove it. Throwing before `setHost` leaves the caller free to record the
+  // failure however it likes.
   const client = buildClient(entry);
+  store.setHost(entry.id, entry.label);
   let closed = false;
   let seedRetryTimer: ReturnType<typeof setTimeout> | null = null;
   let unsubscribeStatus: (() => void) | null = null;

@@ -8,6 +8,7 @@ import {
   saveConfig,
   configPath,
   watchConfig,
+  hostsFingerprint,
   type AppConfig,
 } from "./config/host-config.js";
 import { hostEntryFromPairingUrl } from "./config/pairing.js";
@@ -61,22 +62,63 @@ if (!app.requestSingleInstanceLock()) {
     }
   }
 
-  let appliedHostsJson = "";
+  let appliedFingerprint = "";
+  let pendingReconnect: Promise<void> = Promise.resolve();
 
   /**
    * Rebuilds the connection fleet. Our own writes trip the config watcher, so
    * this no-ops when the host list is unchanged rather than churning sockets.
    */
-  async function reconnectAll(config: AppConfig): Promise<void> {
-    const hostsJson = JSON.stringify(config.hosts);
-    if (hostsJson === appliedHostsJson) return;
-    appliedHostsJson = hostsJson;
+  async function applyHosts(config: AppConfig): Promise<void> {
+    const fingerprint = hostsFingerprint(config.hosts);
+    if (fingerprint === appliedFingerprint) return;
+    // Recorded only once the fleet is actually built. Claiming it up front
+    // meant a rebuild that died partway still looked applied, so a watcher
+    // reload could never repair it.
+    appliedFingerprint = "";
 
     for (const connection of connections.values()) await connection.close();
     connections.clear();
+
+    const failures: string[] = [];
     for (const entry of config.hosts) {
-      connections.set(entry.id, createHostConnection({ entry, store }));
+      try {
+        const connection = createHostConnection({ entry, store });
+        // Duplicate ids are rejected by the schema; this is the belt to that
+        // brace, because silently overwriting one leaks a live connection
+        // whose socket and timers nothing can ever reach again.
+        const replaced = connections.get(entry.id);
+        if (replaced) void replaced.close();
+        connections.set(entry.id, connection);
+      } catch (error) {
+        // One unusable entry — a hand-edited endpoint that cannot form a URL,
+        // say — must not take down every host after it. Show it as a host
+        // that exists and cannot be used, and name it in the error.
+        store.setHost(entry.id, entry.label);
+        store.setStatus(entry.id, "invalid");
+        failures.push(`${entry.label}: ${errorText(error)}`);
+      }
     }
+
+    appliedFingerprint = fingerprint;
+    if (failures.length > 0) {
+      dialog.showErrorBox(
+        "Paseo Icon — configuration error",
+        `${configPath(configDir)}\n\nThese hosts could not be used:\n\n${failures.join("\n")}`,
+      );
+    }
+  }
+
+  /**
+   * Serialized: `applyHosts` awaits every close, a window far longer than the
+   * watcher's debounce, so two overlapping rebuilds would interleave and one
+   * generation's `connections.clear()` would drop the other's live
+   * connections without closing them.
+   */
+  function reconnectAll(config: AppConfig): Promise<void> {
+    const next = pendingReconnect.then(() => applyHosts(config));
+    pendingReconnect = next.catch(() => undefined);
+    return next;
   }
 
   async function reloadFromDisk(): Promise<void> {
