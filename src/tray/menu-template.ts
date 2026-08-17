@@ -4,6 +4,9 @@ import type { TrayAgentRow, TrayMenuSection, TrayViewModel } from "./view-model.
 
 export interface MenuHandlers {
   onOpenAgent: (row: TrayAgentRow) => void;
+  onOpenApp: () => void;
+  /** Rebuilds one host's connection after its auth was fixed on the daemon. */
+  onRetryHost: (hostId: string) => void;
   onAddHostFromClipboard: () => void;
   onEditConfig: () => void;
   onToggleLoginItem: (enabled: boolean) => void;
@@ -55,7 +58,8 @@ function sectionItems(
     ...section.rows.map((row) => rowItem(row, handlers)),
   ];
   if (section.overflow > 0) {
-    items.push({ label: `…and ${section.overflow} more`, enabled: false });
+    // The capped rows are only reachable in the app, so the row goes there.
+    items.push({ label: `…and ${section.overflow} more`, click: () => handlers.onOpenApp() });
   }
   return items;
 }
@@ -66,6 +70,18 @@ export function buildMenuTemplate(
   options: { loginItemEnabled: boolean },
 ): MenuItemConstructorOptions[] {
   const items: MenuItemConstructorOptions[] = [];
+
+  if (model.configError) {
+    // First row, and clickable: the fix is in the file, so the row opens it.
+    items.push(
+      {
+        label: "Configuration error",
+        toolTip: model.configError,
+        click: () => handlers.onEditConfig(),
+      },
+      { type: "separator" },
+    );
+  }
 
   if (model.sections.length === 0) {
     items.push({ label: "No agents", enabled: false });
@@ -82,7 +98,14 @@ export function buildMenuTemplate(
   if (model.hostStatuses.length > 0) {
     items.push({ type: "separator" });
     for (const host of model.hostStatuses) {
-      items.push({ label: `${host.label} · ${STATUS_TEXT[host.status]}`, enabled: false });
+      const text = `${host.label} · ${STATUS_TEXT[host.status]}`;
+      if (host.status === "unauthorized") {
+        // Auth rejection ends the reconnect loop for good, so without this the
+        // only way back after fixing the password is relaunching the app.
+        items.push({ label: `${text} — retry`, click: () => handlers.onRetryHost(host.hostId) });
+      } else {
+        items.push({ label: text, enabled: false });
+      }
     }
   }
 
@@ -90,6 +113,7 @@ export function buildMenuTemplate(
   // so nothing may be click-only.
   items.push(
     { type: "separator" },
+    { label: "Open Paseo", click: () => handlers.onOpenApp() },
     { label: "Add host from clipboard…", click: () => handlers.onAddHostFromClipboard() },
     { label: "Edit configuration…", click: () => handlers.onEditConfig() },
     {

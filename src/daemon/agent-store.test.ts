@@ -92,6 +92,22 @@ describe("AgentStore", () => {
     expect(store.snapshot()).toEqual([]);
   });
 
+  it("holds a configuration error and notifies only when it changes", () => {
+    const store = new AgentStore();
+    const listener = vi.fn();
+    store.subscribe(listener);
+
+    expect(store.getConfigError()).toBeNull();
+    store.setConfigError("broken");
+    store.setConfigError("broken");
+    expect(store.getConfigError()).toBe("broken");
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    store.setConfigError(null);
+    expect(store.getConfigError()).toBeNull();
+    expect(listener).toHaveBeenCalledTimes(2);
+  });
+
   it("notifies subscribers on change and stops after unsubscribe", () => {
     const store = new AgentStore();
     const listener = vi.fn();

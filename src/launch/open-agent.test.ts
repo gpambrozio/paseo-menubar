@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { defaultDesktopAppInstalled, openAgent } from "./open-agent.js";
+import { defaultDesktopAppInstalled, openAgent, openApp } from "./open-agent.js";
 
 describe("openAgent", () => {
   it("uses the paseo deep link when the desktop app is installed", () => {
@@ -40,5 +40,28 @@ describe("openAgent", () => {
 
   it("probes real filesystem paths without throwing", () => {
     expect(typeof defaultDesktopAppInstalled()).toBe("boolean");
+  });
+});
+
+describe("openApp", () => {
+  it("opens the app's scheme when the desktop app is installed", () => {
+    const openExternal = vi.fn();
+    openApp({}, { desktopAppInstalled: () => true, openExternal });
+    expect(openExternal).toHaveBeenCalledWith("paseo://");
+  });
+
+  it("falls back to the daemon web UI when the desktop app is absent", () => {
+    const openExternal = vi.fn();
+    openApp(
+      { webBaseUrl: "http://127.0.0.1:6767/" },
+      { desktopAppInstalled: () => false, openExternal },
+    );
+    expect(openExternal).toHaveBeenCalledWith("http://127.0.0.1:6767");
+  });
+
+  it("still tries the scheme when no web fallback is known", () => {
+    const openExternal = vi.fn();
+    openApp({}, { desktopAppInstalled: () => false, openExternal });
+    expect(openExternal).toHaveBeenCalledWith("paseo://");
   });
 });

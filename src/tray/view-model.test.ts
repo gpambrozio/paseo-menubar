@@ -167,6 +167,18 @@ describe("deriveTrayViewModel", () => {
     ]);
   });
 
+  it("carries a configuration error through to the menu, keeping the last good hosts", () => {
+    const model = deriveTrayViewModel([host([agent("a", { requiresAttention: true })])], {
+      configError: "config.json\n\nnot valid JSON",
+    });
+    expect(model.configError).toBe("config.json\n\nnot valid JSON");
+    expect(model.count).toBe(1);
+  });
+
+  it("has no configuration error by default", () => {
+    expect(deriveTrayViewModel([host([])]).configError).toBeNull();
+  });
+
   it("carries serverId on rows so a click can build a deep link", () => {
     const model = deriveTrayViewModel([host([agent("a", { requiresAttention: true })])]);
     expect(model.sections[0]?.rows[0]).toMatchObject({ serverId: "srv-1", agentId: "a" });

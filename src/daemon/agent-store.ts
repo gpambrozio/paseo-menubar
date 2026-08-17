@@ -34,6 +34,23 @@ interface HostEntryState {
 export class AgentStore {
   private readonly hosts = new Map<string, HostEntryState>();
   private readonly listeners = new Set<() => void>();
+  private configError: string | null = null;
+
+  /**
+   * A configuration problem the user has to fix. It rides in the store so the
+   * menu can show it: a modal error box steals focus from the editor the user
+   * is fixing the file in, and on its own leaves the tray showing an
+   * unexplained "No agents".
+   */
+  setConfigError(message: string | null): void {
+    if (this.configError === message) return;
+    this.configError = message;
+    this.emit();
+  }
+
+  getConfigError(): string | null {
+    return this.configError;
+  }
 
   setHost(hostId: string, label: string): void {
     const existing = this.hosts.get(hostId);

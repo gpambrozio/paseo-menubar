@@ -41,6 +41,8 @@ export interface TrayViewModel {
    * The count below them is a floor, not a total, and the menu says so.
    */
   truncatedHosts: string[];
+  /** Set when config.json cannot be used; the last known-good fleet keeps running. */
+  configError: string | null;
 }
 
 function isVisible(agent: AgentSnapshotPayload): boolean {
@@ -72,7 +74,10 @@ function buildSection(
   return { kind, rows: rows.slice(0, cap), overflow: rows.length - cap };
 }
 
-export function deriveTrayViewModel(hosts: HostAgents[]): TrayViewModel {
+export function deriveTrayViewModel(
+  hosts: HostAgents[],
+  options: { configError?: string | null } = {},
+): TrayViewModel {
   const showHostLabel = hosts.length > 1;
 
   // A disconnected host's agents are data we cannot vouch for, so they never
@@ -117,6 +122,7 @@ export function deriveTrayViewModel(hosts: HostAgents[]): TrayViewModel {
     count: attention.length,
     sections,
     truncatedHosts: live.filter((host) => host.truncated).map((host) => host.label),
+    configError: options.configError ?? null,
     hostStatuses: hosts.map((host) => ({
       hostId: host.hostId,
       label: host.label,

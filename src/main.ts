@@ -10,9 +10,10 @@ import {
   watchConfig,
   hostsFingerprint,
   type AppConfig,
+  type HostEntry,
 } from "./config/host-config.js";
 import { hostEntryFromPairingUrl } from "./config/pairing.js";
-import { defaultDesktopAppInstalled, openAgent } from "./launch/open-agent.js";
+import { defaultDesktopAppInstalled, openAgent, openApp } from "./launch/open-agent.js";
 import { createTrayPresenter, type TrayPresenter } from "./tray/tray-presenter.js";
 import type { TrayAgentRow } from "./tray/view-model.js";
 
@@ -31,6 +32,16 @@ if (!app.requestSingleInstanceLock()) {
 
   function showError(title: string, error: unknown): void {
     dialog.showErrorBox(title, errorText(error));
+  }
+
+  // Two independent config problems, reported through one menu row: the file
+  // itself is unusable, and individual entries in an otherwise good file are.
+  // Either can be fixed without the other, so neither may clear the other.
+  let configFileError: string | null = null;
+  let hostEntryError: string | null = null;
+
+  function refreshConfigError(): void {
+    store.setConfigError(configFileError ?? hostEntryError);
   }
 
   async function ensureConfig(): Promise<AppConfig> {
@@ -53,10 +64,8 @@ if (!app.requestSingleInstanceLock()) {
       await saveConfig(configDir, seeded);
       return seeded;
     } catch (error) {
-      dialog.showErrorBox(
-        "Paseo Icon — configuration error",
-        `${configPath(configDir)}\n\n${error instanceof Error ? error.message : String(error)}`,
-      );
+      configFileError = `${configPath(configDir)}\n\n${errorText(error)}`;
+      refreshConfigError();
       // Keep running with no hosts rather than dying; the menu offers a way out.
       return { version: 1, hosts: [] };
     }
@@ -64,6 +73,12 @@ if (!app.requestSingleInstanceLock()) {
 
   let appliedFingerprint = "";
   let pendingReconnect: Promise<void> = Promise.resolve();
+  /**
+   * The entries behind the live connections. Kept because a `TrayAgentRow`
+   * carries only a `hostId`, and both the web fallback and the per-host retry
+   * need the entry itself.
+   */
+  const appliedHosts = new Map<string, HostEntry>();
 
   /**
    * Rebuilds the connection fleet. Our own writes trip the config watcher, so
@@ -79,57 +94,87 @@ if (!app.requestSingleInstanceLock()) {
 
     for (const connection of connections.values()) await connection.close();
     connections.clear();
+    appliedHosts.clear();
 
     const failures: string[] = [];
     for (const entry of config.hosts) {
-      try {
-        const connection = createHostConnection({ entry, store });
-        // Duplicate ids are rejected by the schema; this is the belt to that
-        // brace, because silently overwriting one leaks a live connection
-        // whose socket and timers nothing can ever reach again.
-        const replaced = connections.get(entry.id);
-        if (replaced) void replaced.close();
-        connections.set(entry.id, connection);
-      } catch (error) {
-        // One unusable entry — a hand-edited endpoint that cannot form a URL,
-        // say — must not take down every host after it. Show it as a host
-        // that exists and cannot be used, and name it in the error.
-        store.setHost(entry.id, entry.label);
-        store.setStatus(entry.id, "invalid");
-        failures.push(`${entry.label}: ${errorText(error)}`);
-      }
+      appliedHosts.set(entry.id, entry);
+      const failure = connectHost(entry);
+      if (failure) failures.push(failure);
     }
 
     appliedFingerprint = fingerprint;
-    if (failures.length > 0) {
-      dialog.showErrorBox(
-        "Paseo Icon — configuration error",
-        `${configPath(configDir)}\n\nThese hosts could not be used:\n\n${failures.join("\n")}`,
-      );
+    hostEntryError =
+      failures.length > 0
+        ? `${configPath(configDir)}\n\nThese hosts could not be used:\n\n${failures.join("\n")}`
+        : null;
+    refreshConfigError();
+  }
+
+  /** Creates one host's connection. Returns a failure description, or null. */
+  function connectHost(entry: HostEntry): string | null {
+    try {
+      const connection = createHostConnection({ entry, store });
+      // Duplicate ids are rejected by the schema; this is the belt to that
+      // brace, because silently overwriting one leaks a live connection whose
+      // socket and timers nothing can ever reach again.
+      const replaced = connections.get(entry.id);
+      if (replaced) void replaced.close();
+      connections.set(entry.id, connection);
+      return null;
+    } catch (error) {
+      // One unusable entry — a hand-edited endpoint that cannot form a URL,
+      // say — must not take down every host after it. Show it as a host that
+      // exists and cannot be used, and name it in the error.
+      store.setHost(entry.id, entry.label);
+      store.setStatus(entry.id, "invalid");
+      return `${entry.label}: ${errorText(error)}`;
     }
   }
 
   /**
-   * Serialized: `applyHosts` awaits every close, a window far longer than the
-   * watcher's debounce, so two overlapping rebuilds would interleave and one
-   * generation's `connections.clear()` would drop the other's live
-   * connections without closing them.
+   * Rebuilds one host. Auth rejection disposes its client for good, so without
+   * this a password fixed on the daemon side has no recovery path short of
+   * relaunching — a reload cannot help, since the config bytes never changed.
    */
-  function reconnectAll(config: AppConfig): Promise<void> {
-    const next = pendingReconnect.then(() => applyHosts(config));
+  async function retryHost(hostId: string): Promise<void> {
+    const entry = appliedHosts.get(hostId);
+    if (!entry) return;
+    const existing = connections.get(hostId);
+    connections.delete(hostId);
+    if (existing) await existing.close();
+    connectHost(entry);
+  }
+
+  /**
+   * Runs fleet mutations one at a time. They await every `close()`, a window
+   * far longer than the watcher's debounce, so two overlapping calls would
+   * interleave and one generation's `connections.clear()` would drop the
+   * other's live connections without closing them.
+   */
+  function serialize(task: () => Promise<void>): Promise<void> {
+    const next = pendingReconnect.then(task);
     pendingReconnect = next.catch(() => undefined);
     return next;
   }
 
+  function reconnectAll(config: AppConfig): Promise<void> {
+    return serialize(() => applyHosts(config));
+  }
+
   async function reloadFromDisk(): Promise<void> {
+    let config: AppConfig;
     try {
-      await reconnectAll(await loadConfig(configDir));
+      config = await loadConfig(configDir);
     } catch (error) {
-      dialog.showErrorBox(
-        "Paseo Icon — configuration error",
-        error instanceof Error ? error.message : String(error),
-      );
+      // The last known-good fleet keeps running; the menu carries the news.
+      configFileError = `${configPath(configDir)}\n\n${errorText(error)}`;
+      refreshConfigError();
+      return;
     }
+    configFileError = null;
+    refreshConfigError();
+    await reconnectAll(config);
   }
 
   async function addHostFromClipboard(): Promise<void> {
@@ -187,12 +232,32 @@ if (!app.requestSingleInstanceLock()) {
     });
   }
 
+  /**
+   * The daemon serves the web UI on the same endpoint it serves the socket
+   * on, so a direct host doubles as the fallback target when the desktop app
+   * is not installed. A relay host has no such URL — the relay is a socket
+   * tunnel, not an HTTP origin — so it has no fallback.
+   */
+  function webBaseUrlFor(hostId: string): string | undefined {
+    const entry = appliedHosts.get(hostId);
+    if (!entry || entry.type !== "directTcp") return undefined;
+    return `${entry.useTls ? "https" : "http"}://${entry.endpoint}`;
+  }
+
   function handleOpenAgent(row: TrayAgentRow): void {
     if (!row.serverId) return;
+    const webBaseUrl = webBaseUrlFor(row.hostId);
     openAgent(
-      { serverId: row.serverId, agentId: row.agentId },
+      { serverId: row.serverId, agentId: row.agentId, ...(webBaseUrl ? { webBaseUrl } : {}) },
       { desktopAppInstalled: defaultDesktopAppInstalled, openExternal },
     );
+  }
+
+  function handleOpenApp(): void {
+    const webBaseUrl = [...appliedHosts.keys()]
+      .map((hostId) => webBaseUrlFor(hostId))
+      .find((url) => url !== undefined);
+    openApp({ webBaseUrl }, { desktopAppInstalled: defaultDesktopAppInstalled, openExternal });
   }
 
   app.whenReady()
@@ -208,6 +273,11 @@ if (!app.requestSingleInstanceLock()) {
           isLoginItemEnabled: () => app.getLoginItemSettings().openAtLogin,
           handlers: {
             onOpenAgent: handleOpenAgent,
+            onOpenApp: handleOpenApp,
+            onRetryHost: (hostId) =>
+              void serialize(() => retryHost(hostId)).catch((error) =>
+                showError("Paseo Icon — could not reconnect", error),
+              ),
             onAddHostFromClipboard: () =>
               void addHostFromClipboard().catch((error) =>
                 showError("Paseo Icon — could not add host", error),
@@ -229,7 +299,11 @@ if (!app.requestSingleInstanceLock()) {
         return;
       }
 
-      const stopWatching = watchConfig(configDir, () => void reloadFromDisk());
+      const stopWatching = watchConfig(configDir, () =>
+        void reloadFromDisk().catch((error) =>
+          showError("Paseo Icon — configuration error", error),
+        ),
+      );
 
       app.on("before-quit", () => {
         stopWatching();

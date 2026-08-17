@@ -29,7 +29,7 @@ export function createTrayPresenter(options: {
   let timer: NodeJS.Timeout | null = null;
 
   function render(): void {
-    const model = deriveTrayViewModel(store.snapshot());
+    const model = deriveTrayViewModel(store.snapshot(), { configError: store.getConfigError() });
     tray.setImage(icons[model.icon]);
     // No platform supports a numeric badge on a tray icon. macOS gets the count
     // as adjacent text; elsewhere it rides the tooltip.

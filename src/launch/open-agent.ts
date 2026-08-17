@@ -32,6 +32,22 @@ export function defaultDesktopAppInstalled(): boolean {
   return candidates.some((candidate) => existsSync(candidate));
 }
 
+/**
+ * The bare app link. macOS activates whichever app handles a scheme when a URL
+ * in it is opened, so this brings Paseo forward even though the desktop app's
+ * `open-url` handler ignores links it cannot parse as an agent.
+ */
+const APP_DEEP_LINK = "paseo://";
+
+/** Opens Paseo itself, with the same web fallback rule `openAgent` uses. */
+export function openApp(target: { webBaseUrl?: string | undefined }, deps: OpenAgentDeps): void {
+  if (!deps.desktopAppInstalled() && target.webBaseUrl) {
+    deps.openExternal(target.webBaseUrl.replace(/\/+$/, ""));
+    return;
+  }
+  deps.openExternal(APP_DEEP_LINK);
+}
+
 export function openAgent(target: OpenAgentTarget, deps: OpenAgentDeps): void {
   const { serverId, agentId, webBaseUrl } = target;
 
