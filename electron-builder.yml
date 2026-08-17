@@ -1,8 +1,6 @@
-# NEEDS CONFIRMATION: appId and publish.owner below are guesses, not verified
-# identity. appId derives from the author's email domain (gustavo.eng.br);
-# publish.owner assumes the GitHub account is "gustavoambrozio". Confirm both
-# before the first real publish — appId in particular is hard to change later
-# without breaking auto-update and Keychain entries for existing installs.
+# appId derives from the author's own domain, gustavo.eng.br. Changing it later
+# breaks auto-update and Keychain entries for existing installs, so be sure of
+# it before the first published release rather than after.
 appId: br.eng.gustavo.paseo-icon
 productName: Paseo Icon
 executableName: PaseoIcon
@@ -14,8 +12,8 @@ files:
   - "!**/*.map"
 publish:
   provider: github
-  owner: gustavoambrozio
-  repo: paseo-icon
+  owner: gpambrozio
+  repo: paseo-menubar
 mac:
   category: public.app-category.developer-tools
   target:
