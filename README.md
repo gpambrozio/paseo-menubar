@@ -50,3 +50,10 @@ SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm install
 ## Platform support
 
 macOS only. Windows and Linux are not built yet.
+
+## Design
+
+`docs/superpowers/` holds the design document this app was built from, and the
+implementation plan that followed it. The design document is the one that
+binds; the plan is kept as a record and has known defects. [CLAUDE.md](CLAUDE.md)
+covers the conventions.
