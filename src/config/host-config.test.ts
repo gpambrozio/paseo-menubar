@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { configPath, loadConfig, saveConfig, watchConfig } from "./host-config.js";
@@ -68,6 +68,24 @@ describe("host config", () => {
     await saveConfig(dir, { version: 1, hosts: [] });
     const info = await stat(configPath(dir));
     expect(info.mode & 0o777).toBe(0o600);
+  });
+
+  it("secures a pre-existing file that had looser permissions", async () => {
+    const dir = await tempDir();
+    // Simulate a config file that was created outside saveConfig (or by an
+    // older version of the app) with looser-than-owner-only permissions.
+    await writeFile(configPath(dir), JSON.stringify({ version: 1, hosts: [] }), {
+      encoding: "utf8",
+      mode: 0o644,
+    });
+    await chmod(configPath(dir), 0o644);
+    const before = await stat(configPath(dir));
+    expect(before.mode & 0o777).toBe(0o644);
+
+    await saveConfig(dir, { version: 1, hosts: [] });
+
+    const after = await stat(configPath(dir));
+    expect(after.mode & 0o777).toBe(0o600);
   });
 
   it("notifies once when the file changes, debounced", async () => {

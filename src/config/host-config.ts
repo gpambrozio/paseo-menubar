@@ -1,5 +1,6 @@
-import { readFile, writeFile, chmod } from "node:fs/promises";
+import { readFile, writeFile, chmod, rename } from "node:fs/promises";
 import { watch } from "node:fs";
+import crypto from "node:crypto";
 import path from "node:path";
 import { z } from "zod";
 import { DirectTcpHostConnectionSchema } from "@getpaseo/protocol/host-connection-schema";
@@ -59,9 +60,18 @@ export async function loadConfig(dir: string): Promise<AppConfig> {
 
 export async function saveConfig(dir: string, config: AppConfig): Promise<void> {
   const target = configPath(dir);
-  // Passwords and relay keys live here, so the file is owner-only.
-  await writeFile(target, `${JSON.stringify(config, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-  await chmod(target, 0o600);
+  // Write to a temp file in the same directory and rename over the target.
+  // `mode` on writeFile only applies when a file is newly created, so a
+  // plain overwrite of a pre-existing looser-permission file would briefly
+  // truncate it at the old mode; and truncate-then-write is not atomic, so a
+  // concurrent reader (e.g. our own watchConfig callback) could observe a
+  // torn file, which loadConfig would then throw on. The temp-file + rename
+  // dance avoids both: the file is 0600 before it is ever visible at
+  // `target`, and rename is atomic on POSIX.
+  const tmp = path.join(dir, `.config.json.${process.pid}-${crypto.randomBytes(6).toString("hex")}.tmp`);
+  await writeFile(tmp, `${JSON.stringify(config, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  await chmod(tmp, 0o600);
+  await rename(tmp, target);
 }
 
 const WATCH_DEBOUNCE_MS = 250;
@@ -80,6 +90,14 @@ export function watchConfig(dir: string, onChange: () => void): () => void {
       onChange();
     }, WATCH_DEBOUNCE_MS);
   });
+
+  // FSWatcher is an EventEmitter; an unhandled 'error' event throws and takes
+  // the whole process down. This is reachable in practice — the watched
+  // directory can become inaccessible or be removed out from under us (an
+  // external volume unmounts, the user deletes the config dir) — and this is
+  // a background menu-bar app, so it must never crash from that. There is no
+  // logger yet, so the error is swallowed rather than reported.
+  watcher.on("error", () => {});
 
   return () => {
     if (timer) clearTimeout(timer);
