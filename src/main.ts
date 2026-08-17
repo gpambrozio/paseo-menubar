@@ -87,7 +87,12 @@ if (!app.requestSingleInstanceLock()) {
           );
           return;
         }
-        await dialog.showMessageBox({ message: `Added host "${entry.label}".` });
+        // `entry.label` is absent unless the user typed one -- pairing no
+        // longer bakes the serverId in, so this dialog needs its own
+        // fallback. `entry` is always the "relay" branch here, the only
+        // shape `hostEntryFromPairingUrl` produces.
+        const addedName = entry.label ?? (entry.type === "relay" ? entry.offer.serverId : entry.id);
+        await dialog.showMessageBox({ message: `Added host "${addedName}".` });
       }
 
       function handleOpenWorkspace(row: TrayWorkspaceRow): void {

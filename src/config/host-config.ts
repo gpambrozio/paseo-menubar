@@ -8,14 +8,21 @@ import { ConnectionOfferSchema } from "@getpaseo/protocol/connection-offer";
 
 // Both host shapes come from the published schemas rather than parallel
 // redefinitions, so a protocol change surfaces as a type error here.
+//
+// `label` is optional on both. It is the user's explicit name for the host,
+// and an absent label is what lets the tray fall through to the daemon's own
+// `hostname` instead — see `resolveHostName` in `src/tray/view-model.ts` for
+// the full precedence. A required field with no "unset" value cannot
+// represent that; existing configs that already have a label keep working
+// unchanged.
 const DirectHostSchema = DirectTcpHostConnectionSchema.extend({
-  label: z.string().min(1),
+  label: z.string().min(1).optional(),
 });
 
 const RelayHostSchema = z.object({
   id: z.string().min(1),
   type: z.literal("relay"),
-  label: z.string().min(1),
+  label: z.string().min(1).optional(),
   /** The pairing offer, stored exactly as `paseo daemon pair` issued it. */
   offer: ConnectionOfferSchema,
 });
@@ -66,6 +73,20 @@ export function hostsFingerprint(hosts: HostEntry[]): string {
       ),
     );
   });
+}
+
+/**
+ * The last-resort name for a host: the network address the entry itself
+ * connects through. Used only when nothing better is known yet — no explicit
+ * `label`, and no `hostname` or `serverId` from the daemon, which happens in
+ * the sliver of time between an entry being read from config and its first
+ * `server_info` message. A direct entry's own endpoint is a stable, sane
+ * identifier for that window (e.g. `127.0.0.1:6767`); a relay entry has no
+ * daemon-facing address at all before it connects, so the relay's own
+ * endpoint stands in.
+ */
+export function hostEntryEndpointHint(entry: HostEntry): string {
+  return entry.type === "directTcp" ? entry.endpoint : entry.offer.relay.endpoint;
 }
 
 export function configPath(dir: string): string {

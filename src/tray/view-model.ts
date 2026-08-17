@@ -123,6 +123,28 @@ function isVisible(workspace: WorkspaceDescriptorPayload): boolean {
 }
 
 /**
+ * The display name for a host: the user's explicit label if they set one,
+ * else the daemon's own hostname, else its serverId, else the entry's own
+ * connection endpoint as a last resort before any of those are known.
+ *
+ * Matches Paseo's own precedence for the same decision
+ * (`packages/app/src/runtime/host-runtime.ts:1714`: `label ?? hostname ??
+ * undefined`, with a later fallback to serverId elsewhere in that file) so a
+ * host paired here reads the same way it would in Paseo itself. The tray
+ * never invents a name the way pairing used to (baking the serverId into the
+ * stored label) -- an invented value would sit in the `label` tier forever
+ * and the live hostname would never get a chance to win.
+ */
+export function resolveHostName(host: {
+  label: string | undefined;
+  hostname: string | null;
+  serverId: string | null;
+  endpointHint: string;
+}): string {
+  return host.label ?? host.hostname ?? host.serverId ?? host.endpointHint;
+}
+
+/**
  * Groups a host's agents by the workspace they belong to, most relevant first.
  *
  * `getAgentStatusPriority` is the daemon's own urgency ranking (lower is more
@@ -183,6 +205,7 @@ export function deriveTrayViewModel(
 
   for (const host of live) {
     const agents = agentsByWorkspace(host.agents);
+    const hostName = resolveHostName(host);
     for (const workspace of host.workspaces) {
       if (!isVisible(workspace)) continue;
       // `status` is the daemon's own bucket. Nothing here recomputes it: the
@@ -197,7 +220,7 @@ export function deriveTrayViewModel(
         label: workspace.name,
         projectName: workspace.projectDisplayName,
         diff: workspace.diffStat ?? null,
-        hostLabel: showHostLabel ? host.label : null,
+        hostLabel: showHostLabel ? hostName : null,
       };
       const existing = rowsByBucket.get(bucket);
       if (existing) existing.push(row);
@@ -220,12 +243,19 @@ export function deriveTrayViewModel(
     icon,
     count: counted,
     sections,
-    truncatedHosts: live.filter((host) => host.workspacesTruncated).map((host) => host.label),
-    agentIndexTruncatedHosts: live.filter((host) => host.agentsTruncated).map((host) => host.label),
+    truncatedHosts: live
+      .filter((host) => host.workspacesTruncated)
+      .map((host) => resolveHostName(host)),
+    agentIndexTruncatedHosts: live
+      .filter((host) => host.agentsTruncated)
+      .map((host) => resolveHostName(host)),
     configError: options.configError ?? null,
+    // `label` here is the resolved display name, not the raw config field --
+    // `menu-template.ts` renders it as-is rather than doing its own
+    // precedence.
     hostStatuses: hosts.map((host) => ({
       hostId: host.hostId,
-      label: host.label,
+      label: resolveHostName(host),
       status: host.status,
     })),
   };

@@ -110,12 +110,14 @@ class FakeClient {
     for (const handler of this.handlers.get(type) ?? []) handler({ type, payload });
   }
 
+  hostname: string | null = null;
+
   async connect(): Promise<void> {}
 
   async close(): Promise<void> {}
 
-  getLastServerInfoMessage(): { serverId: string } {
-    return { serverId: "srv-1" };
+  getLastServerInfoMessage(): { serverId: string; hostname: string | null } {
+    return { serverId: "srv-1", hostname: this.hostname };
   }
 
   async fetchAgents(options: unknown): Promise<unknown> {
@@ -310,6 +312,29 @@ describe("createHostConnection seeding", () => {
     expect(client.fetchWorkspaceOptions[0]).toHaveProperty("subscribe");
   });
 
+  it("carries the daemon's hostname into the store alongside its serverId", async () => {
+    const store = new HostStore();
+    const client = new FakeClient();
+    client.hostname = "build-box.local";
+    connect(client, store);
+
+    await waitFor(() => store.snapshot()[0]?.status === "connected");
+    expect(store.snapshot()[0]?.hostname).toBe("build-box.local");
+    expect(store.snapshot()[0]?.serverId).toBe("srv-1");
+  });
+
+  it("leaves the hostname null when the daemon does not report one", async () => {
+    const store = new HostStore();
+    const client = new FakeClient();
+    // FakeClient's hostname defaults to null, standing in for a daemon old
+    // enough not to send the field at all -- the protocol schema normalizes
+    // an absent field to null, same as an explicit one.
+    connect(client, store);
+
+    await waitFor(() => store.snapshot()[0]?.status === "connected");
+    expect(store.snapshot()[0]?.hostname).toBeNull();
+  });
+
   it("retries when only the workspace seed fails, and applies neither list until both land", async () => {
     const store = new HostStore();
     const client = new FakeClient();
@@ -452,6 +477,12 @@ describe("createHostConnection", () => {
     // `connected` at all means both fetches resolved.
     expect(host?.workspaces).toEqual([]);
     expect(host?.serverId).toBeTruthy();
+    // The daemon was started with `hostnames: true`, so a real `server_info`
+    // message carries a real machine hostname. Asserting a non-empty string
+    // rather than a specific value keeps this from being brittle about
+    // whatever this test happens to run on.
+    expect(typeof host?.hostname).toBe("string");
+    expect(host?.hostname?.length).toBeGreaterThan(0);
   });
 
   it("reports disconnected when the daemon goes away", async () => {

@@ -1,4 +1,9 @@
-import { hostsFingerprint, type AppConfig, type HostEntry } from "../config/host-config.js";
+import {
+  hostEntryEndpointHint,
+  hostsFingerprint,
+  type AppConfig,
+  type HostEntry,
+} from "../config/host-config.js";
 import type { HostStore } from "./host-store.js";
 import { createHostConnection, type HostConnection } from "./host-connection.js";
 import { errorText } from "../error-text.js";
@@ -148,9 +153,13 @@ export function createHostFleet(options: {
       // `invalid` until its own status callback flips it back. Unreachable
       // in practice, per the guard's own comment, and nothing leaks, but
       // worth naming so the next reader does not have to re-derive it.
-      store.setHost(entry.id, entry.label);
+      const endpointHint = hostEntryEndpointHint(entry);
+      store.setHost(entry.id, { label: entry.label, endpointHint });
       store.setStatus(entry.id, "invalid");
-      entryFailures.set(entry.id, `${entry.label}: ${errorText(error)}`);
+      // Named the same way `resolveHostName`'s last resort is: an unlabeled
+      // entry has no live daemon data to fall back to either, since it never
+      // connected, so the entry's own endpoint is the best identifier left.
+      entryFailures.set(entry.id, `${entry.label ?? endpointHint}: ${errorText(error)}`);
     }
   }
 

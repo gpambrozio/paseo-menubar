@@ -31,7 +31,19 @@ export type WorkspaceUpdate =
  */
 export interface HostSnapshot {
   hostId: string;
-  label: string;
+  /**
+   * The user's explicit name for this host, from `config.json`. Undefined
+   * when the entry has none — the common case for a paired host, now that
+   * pairing no longer invents one. This is the raw config value, not the
+   * resolved display name: see `resolveHostName` in `src/tray/view-model.ts`
+   * for the precedence that turns this, `hostname`, `serverId`, and
+   * `endpointHint` into what the tray actually shows.
+   */
+  label: string | undefined;
+  /** The daemon's own hostname, from the live `server_info` message. Null before one arrives, or on a daemon old enough not to send it. */
+  hostname: string | null;
+  /** The entry's own connection address — the last-resort name; see `hostEntryEndpointHint`. */
+  endpointHint: string;
   status: HostStatus;
   serverId: string | null;
   workspaces: WorkspaceDescriptorPayload[];
@@ -43,7 +55,9 @@ export interface HostSnapshot {
 }
 
 interface HostEntryState {
-  label: string;
+  label: string | undefined;
+  hostname: string | null;
+  endpointHint: string;
   status: HostStatus;
   serverId: string | null;
   workspaces: Map<string, WorkspaceDescriptorPayload>;
@@ -74,13 +88,16 @@ export class HostStore {
     return this.configError;
   }
 
-  setHost(hostId: string, label: string): void {
+  setHost(hostId: string, options: { label: string | undefined; endpointHint: string }): void {
     const existing = this.hosts.get(hostId);
     if (existing) {
-      existing.label = label;
+      existing.label = options.label;
+      existing.endpointHint = options.endpointHint;
     } else {
       this.hosts.set(hostId, {
-        label,
+        label: options.label,
+        hostname: null,
+        endpointHint: options.endpointHint,
         status: "connecting",
         serverId: null,
         workspaces: new Map(),
@@ -107,6 +124,14 @@ export class HostStore {
     const host = this.hosts.get(hostId);
     if (!host || host.serverId === serverId) return;
     host.serverId = serverId;
+    this.emit();
+  }
+
+  /** The daemon's own hostname, carried in the same way `serverId` is. */
+  setHostname(hostId: string, hostname: string | null): void {
+    const host = this.hosts.get(hostId);
+    if (!host || host.hostname === hostname) return;
+    host.hostname = hostname;
     this.emit();
   }
 
@@ -162,6 +187,8 @@ export class HostStore {
     return [...this.hosts.entries()].map(([hostId, host]) => ({
       hostId,
       label: host.label,
+      hostname: host.hostname,
+      endpointHint: host.endpointHint,
       status: host.status,
       serverId: host.serverId,
       workspaces: [...host.workspaces.values()],

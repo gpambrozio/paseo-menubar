@@ -4,7 +4,7 @@ import type {
   WorkspaceDescriptorPayload,
 } from "@getpaseo/protocol/messages";
 import type { HostSnapshot } from "../daemon/host-store.js";
-import { deriveTrayViewModel } from "./view-model.js";
+import { deriveTrayViewModel, resolveHostName } from "./view-model.js";
 
 function agent(id: string, overrides: Partial<AgentSnapshotPayload> = {}): AgentSnapshotPayload {
   return {
@@ -56,6 +56,8 @@ function host(
   return {
     hostId: "h1",
     label: "laptop",
+    hostname: null,
+    endpointHint: "127.0.0.1:6767",
     status: "connected",
     serverId: "srv-1",
     workspaces,
@@ -286,6 +288,84 @@ describe("deriveTrayViewModel", () => {
   it("carries serverId on rows so a click can build a deep link", () => {
     const model = deriveTrayViewModel([host([workspace("w1")])]);
     expect(model.sections[0]?.rows[0]).toMatchObject({ serverId: "srv-1", workspaceId: "w1" });
+  });
+});
+
+describe("resolveHostName", () => {
+  // Every case supplies a distinct value at every tier so a wrong precedence
+  // (or a tier silently dropped) picks a different string than the one
+  // asserted, rather than one that happens to coincide.
+  function tiers(overrides: Partial<Parameters<typeof resolveHostName>[0]> = {}) {
+    return {
+      label: "explicit-label",
+      hostname: "live-hostname",
+      serverId: "srv-id",
+      endpointHint: "127.0.0.1:6767",
+      ...overrides,
+    };
+  }
+
+  it("prefers the explicit label over everything else", () => {
+    expect(resolveHostName(tiers())).toBe("explicit-label");
+  });
+
+  it("falls through to the live hostname when there is no label", () => {
+    expect(resolveHostName(tiers({ label: undefined }))).toBe("live-hostname");
+  });
+
+  it("falls through to the serverId when there is no label or hostname", () => {
+    expect(resolveHostName(tiers({ label: undefined, hostname: null }))).toBe("srv-id");
+  });
+
+  it("falls through to the entry's own endpoint as the last resort", () => {
+    expect(
+      resolveHostName(tiers({ label: undefined, hostname: null, serverId: null })),
+    ).toBe("127.0.0.1:6767");
+  });
+
+  it("pins the seeded Local host to its explicit label even once a hostname arrives", () => {
+    // The seeded local host is deliberately labelled "Local" by explicit user
+    // request; nothing about a live hostname should ever displace it.
+    expect(resolveHostName(tiers({ label: "Local", hostname: "build-box.local" }))).toBe("Local");
+  });
+});
+
+describe("deriveTrayViewModel host naming", () => {
+  it("shows the live hostname in the host status line when the entry has no label", () => {
+    const model = deriveTrayViewModel([
+      host([], { label: undefined, hostname: "build-box.local", serverId: "srv_example" }),
+    ]);
+    expect(model.hostStatuses).toEqual([
+      { hostId: "h1", label: "build-box.local", status: "connected" },
+    ]);
+  });
+
+  it("falls back to the serverId in the host status line when the daemon reports no hostname", () => {
+    const model = deriveTrayViewModel([
+      host([], { label: undefined, hostname: null, serverId: "srv_example" }),
+    ]);
+    expect(model.hostStatuses).toEqual([
+      { hostId: "h1", label: "srv_example", status: "connected" },
+    ]);
+  });
+
+  it("uses the resolved name, not the raw label, for a truncated-host line", () => {
+    const model = deriveTrayViewModel([
+      host([workspace("w1")], {
+        label: undefined,
+        hostname: "build-box.local",
+        workspacesTruncated: true,
+      }),
+    ]);
+    expect(model.truncatedHosts).toEqual(["build-box.local"]);
+  });
+
+  it("uses the resolved name for the per-row host label with more than one host", () => {
+    const model = deriveTrayViewModel([
+      host([workspace("w1")], { label: undefined, hostname: "build-box.local" }),
+      host([], { hostId: "h2", label: "studio", serverId: "srv-2" }),
+    ]);
+    expect(model.sections[0]?.rows[0]?.hostLabel).toBe("build-box.local");
   });
 });
 

@@ -4,7 +4,7 @@ import {
   buildRelayWebSocketUrl,
   shouldUseTlsForDefaultHostedRelay,
 } from "@getpaseo/protocol/daemon-endpoints";
-import type { HostEntry } from "../config/host-config.js";
+import { hostEntryEndpointHint, type HostEntry } from "../config/host-config.js";
 import type { HostStore } from "./host-store.js";
 import { errorText } from "../error-text.js";
 
@@ -96,7 +96,7 @@ export function createHostConnection(options: {
   // remove it. Throwing before `setHost` leaves the caller free to record the
   // failure however it likes.
   const client = (options.createClient ?? buildClient)(entry);
-  store.setHost(entry.id, entry.label);
+  store.setHost(entry.id, { label: entry.label, endpointHint: hostEntryEndpointHint(entry) });
   let closed = false;
   let seedRetryTimer: ReturnType<typeof setTimeout> | null = null;
   let unsubscribeStatus: (() => void) | null = null;
@@ -172,8 +172,15 @@ export function createHostConnection(options: {
     store.seedWorkspaces(entry.id, workspaces.entries, {
       truncated: workspaces.pageInfo.hasMore,
     });
-    const serverId = client.getLastServerInfoMessage()?.serverId;
-    if (serverId) store.setServerId(entry.id, serverId);
+    // Both fields ride the same `server_info` message, so they land together.
+    // `hostname` is what lets the tray show a real machine name instead of an
+    // opaque serverId or the raw connection endpoint — see `resolveHostName`
+    // in `src/tray/view-model.ts`.
+    const serverInfo = client.getLastServerInfoMessage();
+    if (serverInfo) {
+      store.setServerId(entry.id, serverInfo.serverId);
+      store.setHostname(entry.id, serverInfo.hostname);
+    }
     store.setStatus(entry.id, "connected");
   }
 

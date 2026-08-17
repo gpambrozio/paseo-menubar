@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AppConfig, HostEntry } from "../config/host-config.js";
+import { hostEntryEndpointHint, type AppConfig, type HostEntry } from "../config/host-config.js";
 import { HostStore } from "./host-store.js";
 import { createHostFleet } from "./host-fleet.js";
 
@@ -51,7 +51,7 @@ function createFakeConnections(options: { closeDelayMs?: number; failOn?: string
   function create({ entry, store }: { entry: HostEntry; store: HostStore }) {
     if (failOn.has(entry.id)) throw new Error(`cannot build a client for ${entry.id}`);
     events.push(`create:${entry.id}`);
-    store.setHost(entry.id, entry.label);
+    store.setHost(entry.id, { label: entry.label, endpointHint: hostEntryEndpointHint(entry) });
     const record: CreatedConnection = { entry, closed: false };
     created.push(record);
     return {
@@ -156,6 +156,17 @@ describe("host fleet entry failures", () => {
     await fleet.apply(config(directEntry("bad", { label: "laptop" })));
 
     expect(store.snapshot()).toMatchObject([{ hostId: "bad", label: "laptop", status: "invalid" }]);
+  });
+
+  it("names the failure by endpoint when the unlabeled entry never got the chance to report anything else", async () => {
+    const connections = createFakeConnections({ failOn: ["bad"] });
+    const { fleet, failures } = createFleet(connections);
+
+    await fleet.apply(
+      config(directEntry("bad", { label: undefined, endpoint: "10.1.1.1:6767" })),
+    );
+
+    expect(failures.at(-1)).toEqual(["10.1.1.1:6767: cannot build a client for bad"]);
   });
 
   it("refuses to build a second connection under an id that already has one", async () => {

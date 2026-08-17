@@ -32,9 +32,26 @@ describe("hostEntryFromPairingUrl", () => {
     });
   });
 
-  it("defaults the label to the serverId", () => {
+  it("leaves the label absent when none is given, rather than inventing one from the serverId", () => {
     const entry = hostEntryFromPairingUrl(offerUrl(validOffer), { id: "h2" });
-    expect(entry?.label).toBe("srv-2");
+    expect(entry?.label).toBeUndefined();
+    // Not just the label key: the whole entry must not carry a baked-in name,
+    // since that would permanently outrank the daemon's live hostname.
+    expect(entry).toEqual({
+      id: "h2",
+      type: "relay",
+      offer: {
+        v: 2,
+        serverId: "srv-2",
+        daemonPublicKeyB64: "AAAA",
+        relay: { endpoint: "relay.paseo.sh:443", useTls: true },
+      },
+    });
+  });
+
+  it("also leaves the label absent when the given label is blank", () => {
+    const entry = hostEntryFromPairingUrl(offerUrl(validOffer), { id: "h2", label: "   " });
+    expect(entry?.label).toBeUndefined();
   });
 
   it("stores the offer verbatim, leaving an omitted useTls absent", () => {

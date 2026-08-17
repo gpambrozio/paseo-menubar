@@ -50,7 +50,7 @@ function workspace(
 describe("HostStore", () => {
   it("seeds a host and reports its workspaces and agents", () => {
     const store = new HostStore();
-    store.setHost("h1", "laptop");
+    store.setHost("h1", { label: "laptop", endpointHint: "127.0.0.1:6767" });
     store.seedAgents("h1", [agent("a"), agent("b")]);
     store.seedWorkspaces("h1", [workspace("w1")]);
 
@@ -62,7 +62,7 @@ describe("HostStore", () => {
 
   it("applies an agent upsert as a full replacement", () => {
     const store = new HostStore();
-    store.setHost("h1", "laptop");
+    store.setHost("h1", { label: "laptop", endpointHint: "127.0.0.1:6767" });
     store.seedAgents("h1", [agent("a", { status: "idle" })]);
     store.applyAgentUpdate("h1", { kind: "upsert", agent: agent("a", { status: "running" }) });
 
@@ -71,7 +71,7 @@ describe("HostStore", () => {
 
   it("applies a workspace upsert as a full replacement", () => {
     const store = new HostStore();
-    store.setHost("h1", "laptop");
+    store.setHost("h1", { label: "laptop", endpointHint: "127.0.0.1:6767" });
     store.seedWorkspaces("h1", [workspace("w1", { status: "done" })]);
     store.applyWorkspaceUpdate("h1", {
       kind: "upsert",
@@ -83,7 +83,7 @@ describe("HostStore", () => {
 
   it("applies an agent remove", () => {
     const store = new HostStore();
-    store.setHost("h1", "laptop");
+    store.setHost("h1", { label: "laptop", endpointHint: "127.0.0.1:6767" });
     store.seedAgents("h1", [agent("a"), agent("b")]);
     store.applyAgentUpdate("h1", { kind: "remove", agentId: "a" });
 
@@ -92,7 +92,7 @@ describe("HostStore", () => {
 
   it("applies a workspace remove", () => {
     const store = new HostStore();
-    store.setHost("h1", "laptop");
+    store.setHost("h1", { label: "laptop", endpointHint: "127.0.0.1:6767" });
     store.seedWorkspaces("h1", [workspace("w1"), workspace("w2")]);
     store.applyWorkspaceUpdate("h1", { kind: "remove", workspaceId: "w1" });
 
@@ -101,7 +101,7 @@ describe("HostStore", () => {
 
   it("re-seeding replaces wholesale so a subscription gap cannot strand an agent", () => {
     const store = new HostStore();
-    store.setHost("h1", "laptop");
+    store.setHost("h1", { label: "laptop", endpointHint: "127.0.0.1:6767" });
     store.seedAgents("h1", [agent("a"), agent("b")]);
     store.seedAgents("h1", [agent("b")]);
 
@@ -110,7 +110,7 @@ describe("HostStore", () => {
 
   it("re-seeding replaces workspaces wholesale too", () => {
     const store = new HostStore();
-    store.setHost("h1", "laptop");
+    store.setHost("h1", { label: "laptop", endpointHint: "127.0.0.1:6767" });
     store.seedWorkspaces("h1", [workspace("w1"), workspace("w2")]);
     store.seedWorkspaces("h1", [workspace("w2")]);
 
@@ -119,7 +119,7 @@ describe("HostStore", () => {
 
   it("tracks status and serverId per host", () => {
     const store = new HostStore();
-    store.setHost("h1", "laptop");
+    store.setHost("h1", { label: "laptop", endpointHint: "127.0.0.1:6767" });
     expect(store.snapshot()[0]?.status).toBe("connecting");
 
     store.setStatus("h1", "connected");
@@ -129,9 +129,38 @@ describe("HostStore", () => {
     expect(store.snapshot()[0]?.serverId).toBe("srv-1");
   });
 
+  it("tracks the daemon's hostname the same way it tracks serverId", () => {
+    const store = new HostStore();
+    const listener = vi.fn();
+    store.setHost("h1", { label: "laptop", endpointHint: "127.0.0.1:6767" });
+    store.subscribe(listener);
+
+    expect(store.snapshot()[0]?.hostname).toBeNull();
+
+    store.setHostname("h1", "build-box.local");
+    expect(store.snapshot()[0]?.hostname).toBe("build-box.local");
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    // Same value again: no-op, matching setServerId and setStatus.
+    store.setHostname("h1", "build-box.local");
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    store.setHostname("h1", "new-name.local");
+    expect(store.snapshot()[0]?.hostname).toBe("new-name.local");
+    expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves the label undefined when the entry has none, rather than inventing one", () => {
+    const store = new HostStore();
+    store.setHost("h1", { label: undefined, endpointHint: "127.0.0.1:6767" });
+
+    expect(store.snapshot()[0]?.label).toBeUndefined();
+    expect(store.snapshot()[0]?.endpointHint).toBe("127.0.0.1:6767");
+  });
+
   it("carries each seed's truncation flag independently and clears it on a complete re-seed", () => {
     const store = new HostStore();
-    store.setHost("h1", "laptop");
+    store.setHost("h1", { label: "laptop", endpointHint: "127.0.0.1:6767" });
     expect(store.snapshot()[0]?.workspacesTruncated).toBe(false);
     expect(store.snapshot()[0]?.agentsTruncated).toBe(false);
 
@@ -149,7 +178,7 @@ describe("HostStore", () => {
 
   it("removing a host drops it entirely", () => {
     const store = new HostStore();
-    store.setHost("h1", "laptop");
+    store.setHost("h1", { label: "laptop", endpointHint: "127.0.0.1:6767" });
     store.removeHost("h1");
     expect(store.snapshot()).toEqual([]);
   });
@@ -175,7 +204,7 @@ describe("HostStore", () => {
     const listener = vi.fn();
     const unsubscribe = store.subscribe(listener);
 
-    store.setHost("h1", "laptop");
+    store.setHost("h1", { label: "laptop", endpointHint: "127.0.0.1:6767" });
     expect(listener).toHaveBeenCalledTimes(1);
 
     unsubscribe();

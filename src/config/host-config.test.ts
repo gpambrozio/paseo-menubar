@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   configPath,
+  hostEntryEndpointHint,
   hostsFingerprint,
   loadConfig,
   saveConfig,
@@ -41,6 +42,23 @@ describe("host config", () => {
           endpoint: "localhost:6767",
           useTls: false,
           password: "hunter2",
+        },
+      ],
+    };
+    await saveConfig(dir, config);
+    expect(await loadConfig(dir)).toEqual(config);
+  });
+
+  it("round-trips a direct host with no label, so the tray can fall through to a live hostname", async () => {
+    const dir = await tempDir();
+    const config = {
+      version: 1 as const,
+      hosts: [
+        {
+          id: "h1",
+          type: "directTcp" as const,
+          endpoint: "localhost:6767",
+          useTls: false,
         },
       ],
     };
@@ -157,6 +175,32 @@ describe("host config", () => {
       "utf8",
     );
     await expect(loadConfig(dir)).rejects.toThrow(/config/i);
+  });
+});
+
+describe("hostEntryEndpointHint", () => {
+  it("uses a direct entry's own connection address", () => {
+    const entry: HostEntry = {
+      id: "h1",
+      type: "directTcp",
+      endpoint: "127.0.0.1:6767",
+      useTls: false,
+    };
+    expect(hostEntryEndpointHint(entry)).toBe("127.0.0.1:6767");
+  });
+
+  it("uses a relay entry's relay endpoint", () => {
+    const entry: HostEntry = {
+      id: "h2",
+      type: "relay",
+      offer: {
+        v: 2,
+        serverId: "srv-2",
+        daemonPublicKeyB64: "AAAA",
+        relay: { endpoint: "relay.paseo.sh:443", useTls: true },
+      },
+    };
+    expect(hostEntryEndpointHint(entry)).toBe("relay.paseo.sh:443");
   });
 });
 
