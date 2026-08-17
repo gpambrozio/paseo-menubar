@@ -1,0 +1,12 @@
+// `tsconfig.json` excludes tests because they must not be emitted into `dist`.
+// That left them unchecked, and a test kept passing a field that had been
+// deleted from the type -- vacuously, since the extra property was ignored and
+// the assertion held anyway. This config checks everything and emits nothing.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts", "scripts/**/*.mjs"],
+  "exclude": []
+}

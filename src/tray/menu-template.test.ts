@@ -132,19 +132,6 @@ describe("buildMenuTemplate", () => {
     );
   });
 
-  it("omits an empty diff rather than rendering +0 −0", () => {
-    const model: TrayViewModel = {
-      ...empty,
-      sections: [
-        { bucket: "done", rows: [row({ diff: { additions: 0, deletions: 0 } })], overflow: 0 },
-      ],
-    };
-    const labels = buildMenuTemplate(model, handlers, menuOptions()).map(
-      (i) => i.label,
-    );
-    expect(labels).toContain("fix-login  ·  paseo");
-  });
-
   it("renders the overflow row rather than dropping rows silently, and it opens the app", () => {
     const model: TrayViewModel = {
       ...empty,
