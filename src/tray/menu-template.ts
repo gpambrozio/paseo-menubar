@@ -1,9 +1,14 @@
 import type { MenuItemConstructorOptions } from "electron";
-import type { HostStatus } from "../daemon/agent-store.js";
-import type { TrayAgentRow, TrayMenuSection, TrayViewModel } from "./view-model.js";
+import type { HostStatus } from "../daemon/host-store.js";
+import {
+  SECTION_LABELS,
+  type TrayMenuSection,
+  type TrayViewModel,
+  type TrayWorkspaceRow,
+} from "./view-model.js";
 
 export interface MenuHandlers {
-  onOpenAgent: (row: TrayAgentRow) => void;
+  onOpenWorkspace: (row: TrayWorkspaceRow) => void;
   onOpenApp: () => void;
   /** Rebuilds one host's connection after its auth was fixed on the daemon. */
   onRetryHost: (hostId: string) => void;
@@ -13,8 +18,6 @@ export interface MenuHandlers {
   onQuit: () => void;
 }
 
-const SECTION_TITLES = { attention: "Needs you", working: "Working", idle: "Idle" } as const;
-
 const STATUS_TEXT: Record<HostStatus, string> = {
   connecting: "connecting",
   connected: "connected",
@@ -23,38 +26,35 @@ const STATUS_TEXT: Record<HostStatus, string> = {
   invalid: "invalid configuration",
 };
 
-const REASON_TEXT: Record<string, string> = {
-  finished: "done",
-  permission: "permission",
-  error: "error",
-};
+function diffText(diff: TrayWorkspaceRow["diff"]): string | null {
+  if (!diff) return null;
+  if (diff.additions === 0 && diff.deletions === 0) return null;
+  return `+${diff.additions} −${diff.deletions}`;
+}
 
-function rowLabel(row: TrayAgentRow): string {
-  const parts = [row.label];
-  if (row.detail) parts.push(REASON_TEXT[row.detail] ?? row.detail);
+function rowLabel(row: TrayWorkspaceRow): string {
+  const parts = [row.label, row.projectName];
+  const diff = diffText(row.diff);
+  if (diff) parts.push(diff);
   if (row.hostLabel) parts.push(row.hostLabel);
   return parts.join("  ·  ");
 }
 
-function rowItem(row: TrayAgentRow, handlers: MenuHandlers): MenuItemConstructorOptions {
-  return { label: rowLabel(row), click: () => handlers.onOpenAgent(row) };
+function rowItem(row: TrayWorkspaceRow, handlers: MenuHandlers): MenuItemConstructorOptions {
+  return { label: rowLabel(row), click: () => handlers.onOpenWorkspace(row) };
 }
 
+/**
+ * A disabled heading, then the section's rows. No submenus: the sidebar puts
+ * every bucket at the same level, and a submenu would hide one section behind a
+ * hover the other four do not need.
+ */
 function sectionItems(
   section: TrayMenuSection,
   handlers: MenuHandlers,
 ): MenuItemConstructorOptions[] {
-  if (section.kind === "idle") {
-    return [
-      {
-        label: `${SECTION_TITLES.idle} (${section.rows.length})`,
-        submenu: section.rows.map((row) => rowItem(row, handlers)),
-      },
-    ];
-  }
-
   const items: MenuItemConstructorOptions[] = [
-    { label: SECTION_TITLES[section.kind], enabled: false },
+    { label: SECTION_LABELS[section.bucket], enabled: false },
     ...section.rows.map((row) => rowItem(row, handlers)),
   ];
   if (section.overflow > 0) {
@@ -84,15 +84,20 @@ export function buildMenuTemplate(
   }
 
   if (model.sections.length === 0) {
-    items.push({ label: "No agents", enabled: false });
+    items.push({ label: "No workspaces", enabled: false });
   } else {
     for (const section of model.sections) items.push(...sectionItems(section, handlers));
   }
 
-  // The seed page has a ceiling. Reaching it means the count is a floor, and
-  // a floor presented as a total is the silent cap the spec forbids.
+  // The seed page has a ceiling. Reaching it means these rows are a subset, and
+  // a subset presented as the whole list is the silent cap the spec forbids.
   for (const label of model.truncatedHosts) {
-    items.push({ label: `Not all agents shown · ${label}`, enabled: false });
+    items.push({ label: `Not all workspaces shown · ${label}`, enabled: false });
+  }
+  // A capped agent page costs click targets rather than rows: a workspace whose
+  // agents fell off the page opens in the browser instead of the app.
+  for (const label of model.agentIndexTruncatedHosts) {
+    items.push({ label: `Not all agents loaded · ${label}`, enabled: false });
   }
 
   if (model.hostStatuses.length > 0) {

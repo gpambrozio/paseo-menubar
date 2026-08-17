@@ -1,4 +1,7 @@
-import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
+import type {
+  AgentSnapshotPayload,
+  WorkspaceDescriptorPayload,
+} from "@getpaseo/protocol/messages";
 
 export type HostStatus =
   | "connecting"
@@ -13,25 +16,44 @@ export type AgentUpdate =
   | { kind: "upsert"; agent: AgentSnapshotPayload }
   | { kind: "remove"; agentId: string };
 
-export interface HostAgents {
+/** The `workspace_update` payload shape, narrowed to what the store applies. */
+export type WorkspaceUpdate =
+  | { kind: "upsert"; workspace: WorkspaceDescriptorPayload }
+  | { kind: "remove"; workspaceId: string };
+
+/**
+ * One host's replicated state.
+ *
+ * Two lists, because they answer two different questions. `workspaces` is what
+ * the menu shows — the same unit and the same daemon-computed status bucket the
+ * Paseo sidebar renders. `agents` exists only to resolve a click: there is no
+ * workspace deep link, so opening a row means opening one of its agents.
+ */
+export interface HostSnapshot {
   hostId: string;
   label: string;
   status: HostStatus;
   serverId: string | null;
+  workspaces: WorkspaceDescriptorPayload[];
   agents: AgentSnapshotPayload[];
+  /** The host has more workspaces than the seed page could carry. */
+  workspacesTruncated: boolean;
   /** The host has more agents than the seed page could carry. */
-  truncated: boolean;
+  agentsTruncated: boolean;
 }
 
 interface HostEntryState {
   label: string;
   status: HostStatus;
   serverId: string | null;
+  workspaces: Map<string, WorkspaceDescriptorPayload>;
   agents: Map<string, AgentSnapshotPayload>;
-  truncated: boolean;
+  workspacesTruncated: boolean;
+  agentsTruncated: boolean;
 }
 
-export class AgentStore {
+/** Replicated workspace and agent state, keyed by host. */
+export class HostStore {
   private readonly hosts = new Map<string, HostEntryState>();
   private readonly listeners = new Set<() => void>();
   private configError: string | null = null;
@@ -40,7 +62,7 @@ export class AgentStore {
    * A configuration problem the user has to fix. It rides in the store so the
    * menu can show it: a modal error box steals focus from the editor the user
    * is fixing the file in, and on its own leaves the tray showing an
-   * unexplained "No agents".
+   * unexplained "No workspaces".
    */
   setConfigError(message: string | null): void {
     if (this.configError === message) return;
@@ -61,8 +83,10 @@ export class AgentStore {
         label,
         status: "connecting",
         serverId: null,
+        workspaces: new Map(),
         agents: new Map(),
-        truncated: false,
+        workspacesTruncated: false,
+        agentsTruncated: false,
       });
     }
     this.emit();
@@ -87,7 +111,7 @@ export class AgentStore {
   }
 
   /** Replaces the host's agents wholesale. Called on connect and on every reconnect. */
-  seed(
+  seedAgents(
     hostId: string,
     agents: AgentSnapshotPayload[],
     options: { truncated?: boolean } = {},
@@ -95,11 +119,24 @@ export class AgentStore {
     const host = this.hosts.get(hostId);
     if (!host) return;
     host.agents = new Map(agents.map((entry) => [entry.id, entry]));
-    host.truncated = options.truncated === true;
+    host.agentsTruncated = options.truncated === true;
     this.emit();
   }
 
-  applyUpdate(hostId: string, update: AgentUpdate): void {
+  /** Replaces the host's workspaces wholesale. Same rule as `seedAgents`. */
+  seedWorkspaces(
+    hostId: string,
+    workspaces: WorkspaceDescriptorPayload[],
+    options: { truncated?: boolean } = {},
+  ): void {
+    const host = this.hosts.get(hostId);
+    if (!host) return;
+    host.workspaces = new Map(workspaces.map((entry) => [entry.id, entry]));
+    host.workspacesTruncated = options.truncated === true;
+    this.emit();
+  }
+
+  applyAgentUpdate(hostId: string, update: AgentUpdate): void {
     const host = this.hosts.get(hostId);
     if (!host) return;
     if (update.kind === "upsert") {
@@ -110,14 +147,27 @@ export class AgentStore {
     this.emit();
   }
 
-  snapshot(): HostAgents[] {
+  applyWorkspaceUpdate(hostId: string, update: WorkspaceUpdate): void {
+    const host = this.hosts.get(hostId);
+    if (!host) return;
+    if (update.kind === "upsert") {
+      host.workspaces.set(update.workspace.id, update.workspace);
+    } else {
+      if (!host.workspaces.delete(update.workspaceId)) return;
+    }
+    this.emit();
+  }
+
+  snapshot(): HostSnapshot[] {
     return [...this.hosts.entries()].map(([hostId, host]) => ({
       hostId,
       label: host.label,
       status: host.status,
       serverId: host.serverId,
+      workspaces: [...host.workspaces.values()],
       agents: [...host.agents.values()],
-      truncated: host.truncated,
+      workspacesTruncated: host.workspacesTruncated,
+      agentsTruncated: host.agentsTruncated,
     }));
   }
 

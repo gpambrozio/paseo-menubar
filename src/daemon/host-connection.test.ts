@@ -6,8 +6,11 @@ import path from "node:path";
 import pino from "pino";
 import { createPaseoDaemon, hashDaemonPassword } from "@getpaseo/server";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
-import { AgentStore } from "./agent-store.js";
+import type {
+  AgentSnapshotPayload,
+  WorkspaceDescriptorPayload,
+} from "@getpaseo/protocol/messages";
+import { HostStore } from "./host-store.js";
 import { createHostConnection } from "./host-connection.js";
 
 const localEntry = {
@@ -38,6 +41,23 @@ function agent(id: string): AgentSnapshotPayload {
   } as AgentSnapshotPayload;
 }
 
+function workspace(id: string): WorkspaceDescriptorPayload {
+  return {
+    id,
+    projectId: "p1",
+    projectDisplayName: "paseo",
+    projectRootPath: "/work",
+    projectKind: "git",
+    workspaceKind: "worktree",
+    name: id,
+    status: "done",
+    statusEnteredAt: null,
+    activityAt: null,
+    archivingAt: null,
+    scripts: [],
+  } as WorkspaceDescriptorPayload;
+}
+
 type ConnectionState = ReturnType<DaemonClient["getConnectionState"]>;
 
 /**
@@ -48,9 +68,13 @@ type ConnectionState = ReturnType<DaemonClient["getConnectionState"]>;
 class FakeClient {
   state: ConnectionState = { status: "idle" };
   seedFailures = 0;
+  workspaceSeedFailures = 0;
   hasMore = false;
+  workspacesHasMore = false;
   agents: AgentSnapshotPayload[] = [];
+  workspaces: WorkspaceDescriptorPayload[] = [];
   readonly fetchOptions: unknown[] = [];
+  readonly fetchWorkspaceOptions: unknown[] = [];
   private readonly listeners = new Set<(state: ConnectionState) => void>();
 
   asClient(): DaemonClient {
@@ -72,8 +96,18 @@ class FakeClient {
     return () => this.listeners.delete(listener);
   }
 
-  on(): () => void {
-    return () => undefined;
+  private readonly handlers = new Map<string, Set<(message: unknown) => void>>();
+
+  on(type: string, handler: (message: unknown) => void): () => void {
+    const existing = this.handlers.get(type) ?? new Set();
+    existing.add(handler);
+    this.handlers.set(type, existing);
+    return () => existing.delete(handler);
+  }
+
+  /** Delivers one subscription message, the way the real client's stream does. */
+  emit(type: string, payload: unknown): void {
+    for (const handler of this.handlers.get(type) ?? []) handler({ type, payload });
   }
 
   async connect(): Promise<void> {}
@@ -93,6 +127,18 @@ class FakeClient {
     return {
       entries: this.agents.map((item) => ({ agent: item, project: null })),
       pageInfo: { nextCursor: null, prevCursor: null, hasMore: this.hasMore },
+    };
+  }
+
+  async fetchWorkspaces(options: unknown): Promise<unknown> {
+    this.fetchWorkspaceOptions.push(options);
+    if (this.workspaceSeedFailures > 0) {
+      this.workspaceSeedFailures -= 1;
+      throw new Error("workspace seed failed");
+    }
+    return {
+      entries: this.workspaces,
+      pageInfo: { nextCursor: null, prevCursor: null, hasMore: this.workspacesHasMore },
     };
   }
 }
@@ -193,7 +239,7 @@ afterEach(async () => {
 });
 
 describe("createHostConnection seeding", () => {
-  function connect(client: FakeClient, store: AgentStore) {
+  function connect(client: FakeClient, store: HostStore) {
     const connection = createHostConnection({
       entry: localEntry,
       store,
@@ -206,7 +252,7 @@ describe("createHostConnection seeding", () => {
   }
 
   it("retries a failed seed instead of pinning a live host at disconnected", async () => {
-    const store = new AgentStore();
+    const store = new HostStore();
     const client = new FakeClient();
     client.seedFailures = 1;
     client.agents = [agent("a1")];
@@ -220,7 +266,7 @@ describe("createHostConnection seeding", () => {
   });
 
   it("seeds with the same rule the live subscription applies", async () => {
-    const store = new AgentStore();
+    const store = new HostStore();
     const client = new FakeClient();
     connect(client, store);
 
@@ -232,7 +278,7 @@ describe("createHostConnection seeding", () => {
   });
 
   it("asks for the agents that drive the icon first, so the page cap cannot skew the count", async () => {
-    const store = new AgentStore();
+    const store = new HostStore();
     const client = new FakeClient();
     connect(client, store);
 
@@ -247,19 +293,103 @@ describe("createHostConnection seeding", () => {
     });
   });
 
-  it("carries the page's hasMore through as a visible cap", async () => {
-    const store = new AgentStore();
+  it("seeds workspaces and subscribes to their updates", async () => {
+    const store = new HostStore();
+    const client = new FakeClient();
+    client.workspaces = [workspace("w1"), workspace("w2")];
+    connect(client, store);
+
+    await waitFor(() => store.snapshot()[0]?.status === "connected");
+    expect(store.snapshot()[0]?.workspaces.map((item) => item.id)).toEqual(["w1", "w2"]);
+    expect(client.fetchWorkspaceOptions[0]).toMatchObject({
+      sort: [{ key: "status_priority", direction: "asc" }],
+      page: { limit: 200 },
+    });
+    // Without `subscribe` the daemon sends no `workspace_update` at all, so
+    // the menu would freeze at the seed.
+    expect(client.fetchWorkspaceOptions[0]).toHaveProperty("subscribe");
+  });
+
+  it("retries when only the workspace seed fails, and applies neither list until both land", async () => {
+    const store = new HostStore();
+    const client = new FakeClient();
+    client.workspaceSeedFailures = 1;
+    client.agents = [agent("a1")];
+    client.workspaces = [workspace("w1")];
+    connect(client, store);
+
+    await waitFor(() => store.snapshot()[0]?.status === "disconnected");
+    // The agent fetch succeeded on the first attempt, but its result is not
+    // applied on its own: a half-seeded host pairs one fresh list with a
+    // stale one.
+    expect(store.snapshot()[0]?.agents).toEqual([]);
+
+    await waitFor(() => store.snapshot()[0]?.status === "connected");
+    expect(store.snapshot()[0]?.agents.map((item) => item.id)).toEqual(["a1"]);
+    expect(store.snapshot()[0]?.workspaces.map((item) => item.id)).toEqual(["w1"]);
+  });
+
+  it("applies a streamed workspace upsert", async () => {
+    const store = new HostStore();
+    const client = new FakeClient();
+    connect(client, store);
+
+    await waitFor(() => store.snapshot()[0]?.status === "connected");
+    client.emit("workspace_update", { kind: "upsert", workspace: workspace("w1") });
+    expect(store.snapshot()[0]?.workspaces.map((item) => item.id)).toEqual(["w1"]);
+  });
+
+  it("reads a streamed workspace removal from `id`, not `agentId`", async () => {
+    const store = new HostStore();
+    const client = new FakeClient();
+    client.workspaces = [workspace("w1"), workspace("w2")];
+    connect(client, store);
+
+    await waitFor(() => store.snapshot()[0]?.status === "connected");
+    // `workspace_update`'s removal field is `id`; `agent_update`'s is
+    // `agentId`. Reading the wrong one yields `undefined` and a row that never
+    // leaves the menu.
+    client.emit("workspace_update", { kind: "remove", id: "w1" });
+    expect(store.snapshot()[0]?.workspaces.map((item) => item.id)).toEqual(["w2"]);
+  });
+
+  it("reads a streamed agent removal from `agentId`", async () => {
+    const store = new HostStore();
+    const client = new FakeClient();
+    client.agents = [agent("a1"), agent("a2")];
+    connect(client, store);
+
+    await waitFor(() => store.snapshot()[0]?.status === "connected");
+    client.emit("agent_update", { kind: "remove", agentId: "a1" });
+    expect(store.snapshot()[0]?.agents.map((item) => item.id)).toEqual(["a2"]);
+  });
+
+  it("carries the workspace page's hasMore through as a visible cap", async () => {
+    const store = new HostStore();
+    const client = new FakeClient();
+    client.workspacesHasMore = true;
+    client.workspaces = [workspace("w1")];
+    connect(client, store);
+
+    await waitFor(() => store.snapshot()[0]?.status === "connected");
+    expect(store.snapshot()[0]?.workspacesTruncated).toBe(true);
+    expect(store.snapshot()[0]?.agentsTruncated).toBe(false);
+  });
+
+  it("carries the agent page's hasMore through as a visible cap", async () => {
+    const store = new HostStore();
     const client = new FakeClient();
     client.hasMore = true;
     client.agents = [agent("a1")];
     connect(client, store);
 
     await waitFor(() => store.snapshot()[0]?.status === "connected");
-    expect(store.snapshot()[0]?.truncated).toBe(true);
+    expect(store.snapshot()[0]?.agentsTruncated).toBe(true);
+    expect(store.snapshot()[0]?.workspacesTruncated).toBe(false);
   });
 
   it("reports each connection transition, including connecting", async () => {
-    const store = new AgentStore();
+    const store = new HostStore();
     const client = new FakeClient();
     const seen: string[] = [];
     store.subscribe(() => {
@@ -278,7 +408,7 @@ describe("createHostConnection seeding", () => {
   });
 
   it("classifies an auth rejection as unauthorized rather than disconnected", async () => {
-    const store = new AgentStore();
+    const store = new HostStore();
     const client = new FakeClient();
     connect(client, store);
 
@@ -300,7 +430,7 @@ describe("createHostConnection", () => {
     const harness = await startDaemon();
     cleanups.push(harness.stop);
 
-    const store = new AgentStore();
+    const store = new HostStore();
     const connection = createHostConnection({
       entry: {
         id: "h1",
@@ -317,12 +447,16 @@ describe("createHostConnection", () => {
 
     const host = store.snapshot()[0];
     expect(host?.agents).toEqual([]);
+    // A real daemon answers `fetch_workspaces_request` too, which is what puts
+    // rows in the menu. An empty home has no workspaces, but reaching
+    // `connected` at all means both fetches resolved.
+    expect(host?.workspaces).toEqual([]);
     expect(host?.serverId).toBeTruthy();
   });
 
   it("reports disconnected when the daemon goes away", async () => {
     const harness = await startDaemon();
-    const store = new AgentStore();
+    const store = new HostStore();
     const connection = createHostConnection({
       entry: {
         id: "h1",
@@ -343,7 +477,7 @@ describe("createHostConnection", () => {
 
   it("reports connecting again while the SDK retries a lost connection", async () => {
     const harness = await startDaemon();
-    const store = new AgentStore();
+    const store = new HostStore();
 
     // Record every status the store passes through: a reconnect attempt's
     // `connecting` leg can be shorter than any polling interval, so the
@@ -386,7 +520,7 @@ describe("createHostConnection", () => {
     });
     cleanups.push(harness.stop);
 
-    const store = new AgentStore();
+    const store = new HostStore();
     const connection = createHostConnection({
       entry: {
         id: "h1",

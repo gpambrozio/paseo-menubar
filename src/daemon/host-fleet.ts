@@ -1,5 +1,5 @@
 import { hostsFingerprint, type AppConfig, type HostEntry } from "../config/host-config.js";
-import type { AgentStore } from "./agent-store.js";
+import type { HostStore } from "./host-store.js";
 import { createHostConnection, type HostConnection } from "./host-connection.js";
 import { errorText } from "../error-text.js";
 
@@ -38,7 +38,7 @@ export interface HostFleet {
  * the caller's job.
  */
 export function createHostFleet(options: {
-  store: AgentStore;
+  store: HostStore;
   /**
    * Receives the entries that could not be used, empty when all are fine.
    * The fleet does not own the wording of the user-facing message: the caller
@@ -49,7 +49,7 @@ export function createHostFleet(options: {
    * Test seam. Production builds a real connection per entry; tests supply a
    * fake so fleet behaviour is exercised without a daemon.
    */
-  createConnection?: (options: { entry: HostEntry; store: AgentStore }) => HostConnection;
+  createConnection?: (options: { entry: HostEntry; store: HostStore }) => HostConnection;
 }): HostFleet {
   const { store, onEntryFailures } = options;
   const createConnection = options.createConnection ?? createHostConnection;

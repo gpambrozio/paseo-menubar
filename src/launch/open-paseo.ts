@@ -59,3 +59,48 @@ export function openAgent(target: OpenAgentTarget, deps: OpenAgentDeps): void {
 
   deps.openExternal(buildAgentDeepLink({ serverId, agentId }));
 }
+
+export interface OpenWorkspaceTarget {
+  serverId: string;
+  workspaceId: string;
+  /**
+   * The workspace's most relevant agent, chosen by the view model, or null when
+   * it has none.
+   */
+  agentId: string | null;
+  /** Daemon HTTP base URL. Direct hosts have one; relay hosts do not. */
+  webBaseUrl?: string;
+}
+
+/**
+ * Opens a workspace.
+ *
+ * There is no workspace deep link. `parseAgentDeepLink` returns null unless the
+ * path's second segment is `agent`, and the desktop app's `open-url` handler
+ * drops what it cannot parse — so `paseo://h/<serverId>/workspace/<id>` opens
+ * nothing at all. Paseo is a separate repository and this app cannot change
+ * that, so a workspace is opened through one of its agents.
+ */
+export function openWorkspace(target: OpenWorkspaceTarget, deps: OpenAgentDeps): void {
+  const { serverId, workspaceId, agentId, webBaseUrl } = target;
+
+  if (agentId) {
+    openAgent({ serverId, agentId, ...(webBaseUrl ? { webBaseUrl } : {}) }, deps);
+    return;
+  }
+
+  // No agent to stand in for the workspace. The daemon's own web UI does route
+  // this path, so the browser lands on the right workspace — preferred over
+  // `paseo://` even with the desktop app installed, which would only bring
+  // Paseo forward at whatever it happened to be showing.
+  if (webBaseUrl) {
+    const route = `/h/${encodeURIComponent(serverId)}/workspace/${encodeURIComponent(workspaceId)}`;
+    deps.openExternal(`${webBaseUrl.replace(/\/+$/, "")}${route}`);
+    return;
+  }
+
+  // A relay host with no agent in the workspace: no deep link, and no HTTP
+  // origin to fall back to. Open Paseo itself rather than swallowing the click
+  // — a menu row that does nothing reads as a broken app.
+  openApp({}, deps);
+}

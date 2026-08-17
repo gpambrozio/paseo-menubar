@@ -1,6 +1,6 @@
 import { Menu, Tray, nativeImage } from "electron";
 import path from "node:path";
-import type { AgentStore } from "../daemon/agent-store.js";
+import type { HostStore } from "../daemon/host-store.js";
 import { buildMenuTemplate, type MenuHandlers } from "./menu-template.js";
 import { deriveTrayViewModel, type TrayIconState } from "./view-model.js";
 
@@ -11,7 +11,7 @@ export interface TrayPresenter {
 }
 
 export function createTrayPresenter(options: {
-  store: AgentStore;
+  store: HostStore;
   assetsDir: string;
   handlers: MenuHandlers;
   isLoginItemEnabled: () => boolean;

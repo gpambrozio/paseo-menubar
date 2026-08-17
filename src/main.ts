@@ -1,20 +1,20 @@
 import { app, clipboard, dialog, shell } from "electron";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { AgentStore } from "./daemon/agent-store.js";
+import { HostStore } from "./daemon/host-store.js";
 import { createHostFleet } from "./daemon/host-fleet.js";
 import { configPath, watchConfig } from "./config/host-config.js";
 import { createConfigSession } from "./config/config-session.js";
 import { hostEntryFromPairingUrl } from "./config/pairing.js";
-import { defaultDesktopAppInstalled, openAgent, openApp } from "./launch/open-agent.js";
+import { defaultDesktopAppInstalled, openApp, openWorkspace } from "./launch/open-paseo.js";
 import { createTrayPresenter, type TrayPresenter } from "./tray/tray-presenter.js";
-import type { TrayAgentRow } from "./tray/view-model.js";
+import type { TrayWorkspaceRow } from "./tray/view-model.js";
 import { errorText } from "./error-text.js";
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  const store = new AgentStore();
+  const store = new HostStore();
 
   function showError(title: string, error: unknown): void {
     dialog.showErrorBox(title, errorText(error));
@@ -90,11 +90,16 @@ if (!app.requestSingleInstanceLock()) {
         await dialog.showMessageBox({ message: `Added host "${entry.label}".` });
       }
 
-      function handleOpenAgent(row: TrayAgentRow): void {
+      function handleOpenWorkspace(row: TrayWorkspaceRow): void {
         if (!row.serverId) return;
         const webBaseUrl = fleet.webBaseUrlFor(row.hostId);
-        openAgent(
-          { serverId: row.serverId, agentId: row.agentId, ...(webBaseUrl ? { webBaseUrl } : {}) },
+        openWorkspace(
+          {
+            serverId: row.serverId,
+            workspaceId: row.workspaceId,
+            agentId: row.agentId,
+            ...(webBaseUrl ? { webBaseUrl } : {}),
+          },
           { desktopAppInstalled: defaultDesktopAppInstalled, openExternal },
         );
       }
@@ -113,7 +118,7 @@ if (!app.requestSingleInstanceLock()) {
           assetsDir: path.join(app.getAppPath(), "assets", "generated"),
           isLoginItemEnabled: () => app.getLoginItemSettings().openAtLogin,
           handlers: {
-            onOpenAgent: handleOpenAgent,
+            onOpenWorkspace: handleOpenWorkspace,
             onOpenApp: handleOpenApp,
             onRetryHost: (hostId) =>
               void fleet

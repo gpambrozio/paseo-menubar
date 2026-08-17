@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AppConfig, HostEntry } from "../config/host-config.js";
-import { AgentStore } from "./agent-store.js";
+import { HostStore } from "./host-store.js";
 import { createHostFleet } from "./host-fleet.js";
 
 function directEntry(id: string, overrides: Partial<Extract<HostEntry, { type: "directTcp" }>> = {}) {
@@ -48,7 +48,7 @@ function createFakeConnections(options: { closeDelayMs?: number; failOn?: string
   /** Every construction and teardown, in the order they happened. */
   const events: string[] = [];
 
-  function create({ entry, store }: { entry: HostEntry; store: AgentStore }) {
+  function create({ entry, store }: { entry: HostEntry; store: HostStore }) {
     if (failOn.has(entry.id)) throw new Error(`cannot build a client for ${entry.id}`);
     events.push(`create:${entry.id}`);
     store.setHost(entry.id, entry.label);
@@ -77,7 +77,7 @@ function createFakeConnections(options: { closeDelayMs?: number; failOn?: string
 
 function createFleet(
   connections: ReturnType<typeof createFakeConnections>,
-  store = new AgentStore(),
+  store = new HostStore(),
 ) {
   const failures: string[][] = [];
   const fleet = createHostFleet({
@@ -214,7 +214,7 @@ describe("host fleet fingerprint guard", () => {
 
   it("re-applies after a rebuild that threw partway", async () => {
     const connections = createFakeConnections();
-    const store = new AgentStore();
+    const store = new HostStore();
     let failNextClose = false;
     const fleet = createHostFleet({
       store,

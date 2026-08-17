@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MenuItemConstructorOptions } from "electron";
-import type { TrayViewModel } from "./view-model.js";
+import type { TrayViewModel, TrayWorkspaceRow } from "./view-model.js";
 import { buildMenuTemplate } from "./menu-template.js";
 
 /** Invokes a menu item's handler; the real signature's arguments are unused. */
@@ -9,7 +9,7 @@ function click(item: MenuItemConstructorOptions | undefined): void {
 }
 
 const handlers = {
-  onOpenAgent: vi.fn(),
+  onOpenWorkspace: vi.fn(),
   onOpenApp: vi.fn(),
   onRetryHost: vi.fn(),
   onAddHostFromClipboard: vi.fn(),
@@ -28,48 +28,93 @@ const empty: TrayViewModel = {
   sections: [],
   hostStatuses: [],
   truncatedHosts: [],
+  agentIndexTruncatedHosts: [],
   configError: null,
 };
 
+function row(overrides: Partial<TrayWorkspaceRow> = {}): TrayWorkspaceRow {
+  return {
+    hostId: "h1",
+    serverId: "srv-1",
+    workspaceId: "w1",
+    agentId: "a1",
+    label: "fix-login",
+    projectName: "paseo",
+    diff: null,
+    hostLabel: null,
+    ...overrides,
+  };
+}
+
 describe("buildMenuTemplate", () => {
   it("shows an explicit empty state", () => {
-    const labels = buildMenuTemplate(empty, handlers, { loginItemEnabled: false }).map((i) => i.label);
-    expect(labels).toContain("No agents");
+    const labels = buildMenuTemplate(empty, handlers, { loginItemEnabled: false }).map(
+      (i) => i.label,
+    );
+    expect(labels).toContain("No workspaces");
   });
 
-  it("renders attention rows with their reason", () => {
+  it("labels sections with Paseo's own words", () => {
     const model: TrayViewModel = {
-      icon: "attention",
-      count: 1,
+      ...empty,
+      sections: [
+        { bucket: "needs_input", rows: [row()], overflow: 0 },
+        { bucket: "failed", rows: [row({ workspaceId: "w2" })], overflow: 0 },
+        { bucket: "attention", rows: [row({ workspaceId: "w3" })], overflow: 0 },
+        { bucket: "running", rows: [row({ workspaceId: "w4" })], overflow: 0 },
+        { bucket: "done", rows: [row({ workspaceId: "w5" })], overflow: 0 },
+      ],
+    };
+    const template = buildMenuTemplate(model, handlers, { loginItemEnabled: false });
+    const headings = template.filter((i) => i.enabled === false).map((i) => i.label);
+    expect(headings).toEqual([
+      "Needs input",
+      "Failed",
+      "Ready to review",
+      "Working",
+      "Done",
+    ]);
+    // Flat, in order, no submenus anywhere.
+    expect(template.every((item) => item.submenu === undefined)).toBe(true);
+  });
+
+  it("renders a workspace row with its project, diff, and host, and opens it on click", () => {
+    const model: TrayViewModel = {
+      ...empty,
       sections: [
         {
-          kind: "attention",
-          rows: [
-            {
-              hostId: "h1",
-              serverId: "srv-1",
-              agentId: "a1",
-              label: "Fix login",
-              detail: "permission",
-              hostLabel: null,
-            },
-          ],
+          bucket: "needs_input",
+          rows: [row({ diff: { additions: 12, deletions: 3 }, hostLabel: "laptop" })],
           overflow: 0,
         },
       ],
-      hostStatuses: [{ hostId: "h1", label: "laptop", status: "connected" }],
-      truncatedHosts: [],
-      configError: null,
     };
-    const labels = buildMenuTemplate(model, handlers, { loginItemEnabled: false }).map((i) => i.label);
-    expect(labels).toContain("Needs you");
-    expect(labels.some((label) => label?.includes("Fix login") && label.includes("permission"))).toBe(true);
+    const template = buildMenuTemplate(model, handlers, { loginItemEnabled: false });
+    const item = template.find((i) => i.label?.includes("fix-login"));
+    expect(item?.label).toBe("fix-login  ·  paseo  ·  +12 −3  ·  laptop");
+    click(item);
+    expect(handlers.onOpenWorkspace).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId: "w1", agentId: "a1" }),
+    );
+  });
+
+  it("omits an empty diff rather than rendering +0 −0", () => {
+    const model: TrayViewModel = {
+      ...empty,
+      sections: [
+        { bucket: "done", rows: [row({ diff: { additions: 0, deletions: 0 } })], overflow: 0 },
+      ],
+    };
+    const labels = buildMenuTemplate(model, handlers, { loginItemEnabled: false }).map(
+      (i) => i.label,
+    );
+    expect(labels).toContain("fix-login  ·  paseo");
   });
 
   it("renders the overflow row rather than dropping rows silently, and it opens the app", () => {
     const model: TrayViewModel = {
       ...empty,
-      sections: [{ kind: "attention", rows: [], overflow: 3 }],
+      sections: [{ bucket: "needs_input", rows: [], overflow: 3 }],
     };
     const template = buildMenuTemplate(model, handlers, { loginItemEnabled: false });
     const overflow = template.find((item) => item.label === "…and 3 more");
@@ -113,33 +158,26 @@ describe("buildMenuTemplate", () => {
       ...empty,
       hostStatuses: [{ hostId: "h1", label: "my server", status: "invalid" }],
     };
-    const labels = buildMenuTemplate(model, handlers, { loginItemEnabled: false }).map((i) => i.label);
+    const labels = buildMenuTemplate(model, handlers, { loginItemEnabled: false }).map(
+      (i) => i.label,
+    );
     expect(labels).toContain("my server · invalid configuration");
   });
 
-  it("names a host whose agent list was capped", () => {
+  it("names a host whose workspace list was capped", () => {
     const model: TrayViewModel = { ...empty, truncatedHosts: ["laptop"] };
-    const labels = buildMenuTemplate(model, handlers, { loginItemEnabled: false }).map((i) => i.label);
-    expect(labels).toContain("Not all agents shown · laptop");
+    const labels = buildMenuTemplate(model, handlers, { loginItemEnabled: false }).map(
+      (i) => i.label,
+    );
+    expect(labels).toContain("Not all workspaces shown · laptop");
   });
 
-  it("puts idle agents in a submenu labelled with their count", () => {
-    const model: TrayViewModel = {
-      ...empty,
-      sections: [
-        {
-          kind: "idle",
-          rows: [
-            { hostId: "h1", serverId: "srv-1", agentId: "a1", label: "one", detail: null, hostLabel: null },
-            { hostId: "h1", serverId: "srv-1", agentId: "a2", label: "two", detail: null, hostLabel: null },
-          ],
-          overflow: 0,
-        },
-      ],
-    };
-    const template = buildMenuTemplate(model, handlers, { loginItemEnabled: false });
-    const idle = template.find((item) => item.label === "Idle (2)");
-    expect(idle?.submenu).toHaveLength(2);
+  it("names a host whose agent page was capped, because clicks may miss their target", () => {
+    const model: TrayViewModel = { ...empty, agentIndexTruncatedHosts: ["laptop"] };
+    const labels = buildMenuTemplate(model, handlers, { loginItemEnabled: false }).map(
+      (i) => i.label,
+    );
+    expect(labels).toContain("Not all agents loaded · laptop");
   });
 
   it("shows a host status line per host", () => {
@@ -150,7 +188,9 @@ describe("buildMenuTemplate", () => {
         { hostId: "h2", label: "studio", status: "unauthorized" },
       ],
     };
-    const labels = buildMenuTemplate(model, handlers, { loginItemEnabled: false }).map((i) => i.label);
+    const labels = buildMenuTemplate(model, handlers, { loginItemEnabled: false }).map(
+      (i) => i.label,
+    );
     expect(labels).toContain("laptop · connected");
     expect(labels).toContain("studio · authentication failed — retry");
   });
@@ -167,8 +207,8 @@ describe("buildMenuTemplate", () => {
       ]),
     );
 
-    // Without this the app is only reachable through an agent row, so an idle
-    // fleet has no way in at all.
+    // Without this the app is only reachable through a workspace row, so an
+    // idle fleet has no way in at all.
     click(template.find((item) => item.label === "Open Paseo"));
     expect(handlers.onOpenApp).toHaveBeenCalledTimes(1);
   });

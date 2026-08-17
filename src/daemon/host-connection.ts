@@ -5,10 +5,11 @@ import {
   shouldUseTlsForDefaultHostedRelay,
 } from "@getpaseo/protocol/daemon-endpoints";
 import type { HostEntry } from "../config/host-config.js";
-import type { AgentStore } from "./agent-store.js";
+import type { HostStore } from "./host-store.js";
 import { errorText } from "../error-text.js";
 
 const AGENT_PAGE_LIMIT = 200;
+const WORKSPACE_PAGE_LIMIT = 200;
 const SEED_RETRY_MS = 2_000;
 const APP_VERSION = "0.4.0";
 
@@ -72,12 +73,14 @@ function buildClient(entry: HostEntry): DaemonClient {
  * Owns one host: connect, seed, subscribe, and keep the store's view of this
  * host's status honest.
  *
- * Seeding doubles as the daemon's required handshake — until a
- * `fetch_agents_request` arrives, other requests hang silently.
+ * Seeding doubles as the daemon's required handshake — the daemon sends no
+ * unsolicited list, and each stream only starts once its own fetch has asked
+ * for it, so `agent_update` needs `fetch_agents_request` and `workspace_update`
+ * needs `fetch_workspaces_request`.
  */
 export function createHostConnection(options: {
   entry: HostEntry;
-  store: AgentStore;
+  store: HostStore;
   /**
    * Test seam. Production builds a real `DaemonClient` from the entry; this
    * keeps the SDK surface in this one module while letting tests drive
@@ -101,9 +104,21 @@ export function createHostConnection(options: {
   const unsubscribeAgents = client.on("agent_update", (message) => {
     const payload = message.payload;
     if (payload.kind === "upsert") {
-      store.applyUpdate(entry.id, { kind: "upsert", agent: payload.agent });
+      store.applyAgentUpdate(entry.id, { kind: "upsert", agent: payload.agent });
     } else if (payload.kind === "remove") {
-      store.applyUpdate(entry.id, { kind: "remove", agentId: payload.agentId });
+      store.applyAgentUpdate(entry.id, { kind: "remove", agentId: payload.agentId });
+    }
+  });
+
+  const unsubscribeWorkspaces = client.on("workspace_update", (message) => {
+    const payload = message.payload;
+    if (payload.kind === "upsert") {
+      store.applyWorkspaceUpdate(entry.id, { kind: "upsert", workspace: payload.workspace });
+    } else if (payload.kind === "remove") {
+      // The removal field here is `id`. `agent_update`'s is `agentId`, so the
+      // two payloads do not have the same shape and copying one onto the other
+      // yields `undefined` and a row that never leaves the menu.
+      store.applyWorkspaceUpdate(entry.id, { kind: "remove", workspaceId: payload.id });
     }
   });
 
@@ -132,14 +147,31 @@ export function createHostConnection(options: {
       page: { limit: AGENT_PAGE_LIMIT },
       subscribe: {},
     });
-    // Wholesale replacement: a subscription gap must not strand a dead agent.
-    store.seed(
+    // The menu's rows. `status_priority` ascending is the same key the agent
+    // fetch uses, so on a host past the page limit the workspaces that drive
+    // the icon are the ones that survive the slice. No secondary key: the
+    // daemon's own default ordering decides the rest, and inventing one here
+    // would be the client-side derivation this design exists to avoid.
+    const workspaces = await client.fetchWorkspaces({
+      sort: [{ key: "status_priority", direction: "asc" }],
+      page: { limit: WORKSPACE_PAGE_LIMIT },
+      subscribe: {},
+    });
+    // Both lists land together, after both fetches resolved. A half-applied
+    // seed would pair fresh workspaces with a stale agent index, and the
+    // retry path re-runs both anyway.
+    //
+    // Wholesale replacement: a subscription gap must not strand a dead row.
+    store.seedAgents(
       entry.id,
       response.entries.map((item) => item.agent),
       // Caps are visible, never silent: the page limit is a real ceiling and
       // the menu says so rather than quietly undercounting.
       { truncated: response.pageInfo.hasMore },
     );
+    store.seedWorkspaces(entry.id, workspaces.entries, {
+      truncated: workspaces.pageInfo.hasMore,
+    });
     const serverId = client.getLastServerInfoMessage()?.serverId;
     if (serverId) store.setServerId(entry.id, serverId);
     store.setStatus(entry.id, "connected");
@@ -193,6 +225,7 @@ export function createHostConnection(options: {
     clearSeedRetry();
     unsubscribeStatus?.();
     unsubscribeAgents();
+    unsubscribeWorkspaces();
     void client.close().catch(() => undefined);
   }
 
@@ -245,6 +278,7 @@ export function createHostConnection(options: {
       clearSeedRetry();
       unsubscribeStatus?.();
       unsubscribeAgents();
+      unsubscribeWorkspaces();
       await client.close().catch(() => undefined);
       store.removeHost(entry.id);
     },
