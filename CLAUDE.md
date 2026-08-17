@@ -123,7 +123,13 @@ narrating a check you did not perform.
   after stapling.
 - Releases are `arm64` only — `npm run dist` builds for the host arch, so there is no
   Intel or universal artifact.
-- `latest-mac.yml` refers to the artifacts with hyphens (`Paseo-Icon-…`) while the files on
-  disk have a space (`Paseo Icon-…`); electron-builder's own publisher renames them, a
-  manual upload does not. Nothing reads that file yet — there is no auto-updater — but a
-  hand-upload should rename to match.
+- **`latest-mac.yml` and the dmg's blockmap are stale by construction.** electron-builder
+  writes both before `scripts/notarize-dmg.mjs` staples the dmg, and stapling grows the
+  file — measured at 1984 bytes on 0.1.0 — so the recorded `size` and `sha512` describe an
+  image that no longer exists. The zip's entry is still correct. Neither file is uploaded
+  to releases, and nothing reads them yet because there is no auto-updater; adding
+  electron-updater means regenerating this metadata after stapling, not before.
+- `latest-mac.yml` also refers to the artifacts with hyphens (`Paseo-Icon-…`) while the
+  files on disk have a space (`Paseo Icon-…`). electron-builder's own publisher renames
+  them; a manual upload has to do it by hand, and does, so release asset names are
+  hyphenated.
