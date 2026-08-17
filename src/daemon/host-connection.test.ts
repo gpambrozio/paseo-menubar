@@ -213,6 +213,22 @@ describe("createHostConnection seeding", () => {
     expect(client.fetchOptions[0]).toHaveProperty("subscribe");
   });
 
+  it("asks for the agents that drive the icon first, so the page cap cannot skew the count", async () => {
+    const store = new AgentStore();
+    const client = new FakeClient();
+    connect(client, store);
+
+    await waitFor(() => store.snapshot()[0]?.status === "connected");
+    // Ascending `status_priority` is attention-first: the daemon ranks
+    // pending permission 0, error 1, running 2, initializing 3, the rest 4.
+    expect(client.fetchOptions[0]).toMatchObject({
+      sort: [
+        { key: "status_priority", direction: "asc" },
+        { key: "updated_at", direction: "desc" },
+      ],
+    });
+  });
+
   it("carries the page's hasMore through as a visible cap", async () => {
     const store = new AgentStore();
     const client = new FakeClient();

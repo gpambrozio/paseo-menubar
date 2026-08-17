@@ -114,6 +114,20 @@ export function createHostConnection(options: {
     // plus the subscription's implicit `includeArchived: false` gives both
     // sides the same rule the spec states: archived agents are excluded.
     const response = await client.fetchAgents({
+      // The page limit is a hard ceiling (200, the protocol's max), so on a
+      // busy host the sort decides which agents the icon is counted from. The
+      // daemon sorts every candidate before it slices to the limit
+      // (`@getpaseo/server`'s `listFetchAgentsEntries`), and
+      // `status_priority` ranks pending permission 0, error 1, running 2,
+      // initializing 3, everything else 4 (`@getpaseo/protocol`'s
+      // `getAgentStatusPriority`) — so ascending puts the agents that drive
+      // the icon at the front. `updated_at` stays as the tiebreaker, which is
+      // the daemon's default sort and so what the rest of the page used to be
+      // ordered by.
+      sort: [
+        { key: "status_priority", direction: "asc" },
+        { key: "updated_at", direction: "desc" },
+      ],
       page: { limit: AGENT_PAGE_LIMIT },
       subscribe: {},
     });
