@@ -46,6 +46,7 @@ describe("deriveTrayViewModel", () => {
     const model = deriveTrayViewModel([host([agent("a", { status: "running" })])]);
     expect(model.icon).toBe("working");
     expect(model.count).toBe(0);
+    expect(model.sections[0]?.rows[0]?.detail).toBeNull();
   });
 
   it("treats initializing as working", () => {
@@ -62,6 +63,7 @@ describe("deriveTrayViewModel", () => {
     ]);
     expect(model.icon).toBe("attention");
     expect(model.count).toBe(1);
+    expect(model.sections[0]?.rows[0]?.detail).toBe("finished");
   });
 
   it("counts every attention reason in one number", () => {
@@ -73,6 +75,9 @@ describe("deriveTrayViewModel", () => {
       ]),
     ]);
     expect(model.count).toBe(3);
+    expect(model.sections[0]?.rows[0]?.detail).toBe("finished");
+    expect(model.sections[0]?.rows[1]?.detail).toBe("permission");
+    expect(model.sections[0]?.rows[2]?.detail).toBe("error");
   });
 
   it("excludes archived agents from counts and rows", () => {
@@ -102,6 +107,9 @@ describe("deriveTrayViewModel", () => {
     ]);
     expect(model.sections.map((s) => s.kind)).toEqual(["attention", "working", "idle"]);
     expect(model.sections[0]?.rows[0]?.agentId).toBe("att");
+    expect(model.sections[0]?.rows[0]?.detail).toBe("permission");
+    expect(model.sections[1]?.rows[0]?.detail).toBeNull();
+    expect(model.sections[2]?.rows[0]?.detail).toBeNull();
   });
 
   it("omits the host label with a single host and includes it with two", () => {
