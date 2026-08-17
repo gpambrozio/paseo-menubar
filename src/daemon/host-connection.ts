@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import {
   buildDaemonWebSocketUrl,
@@ -16,15 +15,29 @@ export interface HostConnection {
   close(): Promise<void>;
 }
 
-function isUnauthorized(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /\b401\b|unauthor|forbidden/i.test(message);
+/**
+ * Exact close reasons the daemon sends on the WebSocket close frame when the
+ * password bearer token is missing or wrong
+ * (`@getpaseo/server`'s `attachAuthenticatedSocket`, websocket-server.js).
+ * `DaemonClient` surfaces this verbatim as `ConnectionState`'s `reason` when
+ * `status === "disconnected"` — it never becomes a thrown/rejected error
+ * while `reconnect.enabled` is true, so classification has to read the
+ * connection state, not a caught exception.
+ */
+const AUTH_REJECTION_REASONS = new Set(["Password required", "Incorrect password"]);
+
+function isAuthRejection(reason: string | null | undefined): boolean {
+  return reason != null && AUTH_REJECTION_REASONS.has(reason);
 }
 
 function buildClient(entry: HostEntry): DaemonClient {
   // DaemonClient requires an explicit clientId (unlike the createPaseoClient
-  // wrapper, which generates one when omitted) — one is minted per connection.
-  const clientId = `paseo-icon-${crypto.randomUUID()}`;
+  // wrapper, which generates one when omitted). It must be stable across app
+  // restarts, not random per connection: the daemon keys live session resume
+  // by clientId, so a fresh random id on every launch would always take the
+  // "new session" path instead of resuming. `entry.id` is already a stable,
+  // per-host UUID persisted in config.json.
+  const clientId = `paseo-icon-${entry.id}`;
 
   if (entry.type === "relay") {
     const { offer } = entry;
@@ -71,6 +84,7 @@ export function createHostConnection(options: {
   const client = buildClient(entry);
   let closed = false;
   let lastStatus: string | null = null;
+  let timer: ReturnType<typeof setInterval>;
 
   const unsubscribe = client.on("agent_update", (message) => {
     const payload = message.payload;
@@ -97,31 +111,61 @@ export function createHostConnection(options: {
     store.setStatus(entry.id, "connected");
   }
 
+  /**
+   * Ends the reconnect loop for good (used once the host is classified
+   * unauthorized). A wrong password retried behind backoff forever is the
+   * failure mode to avoid, so this stops polling and disposes the client
+   * rather than leaving it to keep reconnecting underneath a `disconnected`
+   * status. Does not remove the host from the store — it stays visible with
+   * `"unauthorized"` until the caller explicitly calls `close()`.
+   */
+  function stopRetrying(): void {
+    if (closed) return;
+    closed = true;
+    clearInterval(timer);
+    unsubscribe();
+    void client.close().catch(() => undefined);
+  }
+
   void (async () => {
     try {
       await client.connect();
       await seed();
     } catch (error) {
       if (closed) return;
-      // A wrong password retried behind backoff forever is the failure mode
-      // that wastes an afternoon, so stop and say so.
-      store.setStatus(entry.id, isUnauthorized(error) ? "unauthorized" : "disconnected");
+      // In practice DaemonClient never rejects `connect()` for an auth
+      // failure while reconnect is enabled (see the poller below, which is
+      // where that classification actually happens) — this catch covers
+      // genuine connect failures such as a malformed URL or a transport that
+      // fails to construct. Classify the same way for consistency in case a
+      // future SDK version does reject with the same reason text.
+      const message = error instanceof Error ? error.message : String(error);
+      store.setStatus(entry.id, isAuthRejection(message) ? "unauthorized" : "disconnected");
     }
   })();
 
   // DaemonClient exposes no connection-state event, so transitions are polled.
-  const timer = setInterval(() => {
+  timer = setInterval(() => {
     if (closed) return;
-    const status = client.getConnectionState().status;
-    if (status === lastStatus) return;
+    const state = client.getConnectionState();
+    if (state.status === lastStatus) return;
     const previous = lastStatus;
-    lastStatus = status;
+    lastStatus = state.status;
 
-    if (status === "connected" && previous !== null) {
+    if (state.status === "connected" && previous !== null) {
       void seed().catch(() => store.setStatus(entry.id, "disconnected"));
       return;
     }
-    if (status === "disconnected" || status === "disposed") {
+    if (state.status === "disconnected") {
+      if (isAuthRejection(state.reason)) {
+        store.setStatus(entry.id, "unauthorized");
+        stopRetrying();
+        return;
+      }
+      store.setStatus(entry.id, "disconnected");
+      return;
+    }
+    if (state.status === "disposed") {
       store.setStatus(entry.id, "disconnected");
     }
   }, STATUS_POLL_MS);

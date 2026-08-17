@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { Writable } from "node:stream";
 import os from "node:os";
 import path from "node:path";
 import pino from "pino";
-import { createPaseoDaemon } from "@getpaseo/server";
+import { createPaseoDaemon, hashDaemonPassword } from "@getpaseo/server";
 import { AgentStore } from "./agent-store.js";
 import { createHostConnection } from "./host-connection.js";
 
@@ -12,7 +13,26 @@ interface Harness {
   stop: () => Promise<void>;
 }
 
-async function startDaemon(): Promise<Harness> {
+/**
+ * A pino destination that counts log lines containing `needle`, so a test can
+ * observe how many times the daemon rejected a connection attempt without
+ * reaching into daemon internals.
+ */
+function createLogCounter(needle: string): { logger: pino.Logger; count: () => number } {
+  let count = 0;
+  const stream = new Writable({
+    write(chunk, _encoding, callback) {
+      if (chunk.toString().includes(needle)) count += 1;
+      callback();
+    },
+  });
+  return { logger: pino({ level: "warn" }, stream), count: () => count };
+}
+
+async function startDaemon(options?: {
+  auth?: { password: string };
+  logger?: pino.Logger;
+}): Promise<Harness> {
   const root = await mkdtemp(path.join(os.tmpdir(), "paseo-icon-daemon-"));
   const paseoHome = path.join(root, ".paseo");
   await mkdir(paseoHome, { recursive: true });
@@ -32,8 +52,9 @@ async function startDaemon(): Promise<Harness> {
       relayEnabled: false,
       relayEndpoint: "relay.paseo.sh:443",
       appBaseUrl: "https://app.paseo.sh",
+      ...(options?.auth ? { auth: options.auth } : {}),
     },
-    pino({ level: "warn" }),
+    options?.logger ?? pino({ level: "warn" }),
   );
 
   await daemon.start();
@@ -108,5 +129,44 @@ describe("createHostConnection", () => {
     await harness.stop();
 
     await waitFor(() => store.snapshot()[0]?.status === "disconnected");
+  });
+
+  it("marks a wrong password unauthorized and stops retrying", async () => {
+    const rightPassword = "correct-horse-battery-staple";
+    const { logger, count } = createLogCounter(
+      "Rejected WebSocket connection with invalid daemon password",
+    );
+    const harness = await startDaemon({
+      auth: { password: hashDaemonPassword(rightPassword) },
+      logger,
+    });
+    cleanups.push(harness.stop);
+
+    const store = new AgentStore();
+    const connection = createHostConnection({
+      entry: {
+        id: "h1",
+        label: "local",
+        type: "directTcp",
+        endpoint: `127.0.0.1:${harness.port}`,
+        useTls: false,
+        password: "wrong-password",
+      },
+      store,
+    });
+    cleanups.push(() => connection.close());
+
+    await waitFor(() => store.snapshot()[0]?.status === "unauthorized");
+
+    // At least one rejected attempt got us to "unauthorized". Give the
+    // client's exponential-backoff reconnect loop (base delay 1.5s) ample
+    // room to have fired again if retries were not actually stopped.
+    const rejectionsAtUnauthorized = count();
+    expect(rejectionsAtUnauthorized).toBeGreaterThanOrEqual(1);
+
+    await new Promise((resolve) => setTimeout(resolve, 4_000));
+
+    expect(count()).toBe(rejectionsAtUnauthorized);
+    expect(store.snapshot()[0]?.status).toBe("unauthorized");
   });
 });
