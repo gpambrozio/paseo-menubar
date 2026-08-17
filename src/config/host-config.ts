@@ -1,4 +1,4 @@
-import { readFile, writeFile, chmod, rename } from "node:fs/promises";
+import { readFile, writeFile, chmod, rename, unlink } from "node:fs/promises";
 import { watch } from "node:fs";
 import crypto from "node:crypto";
 import path from "node:path";
@@ -69,9 +69,18 @@ export async function saveConfig(dir: string, config: AppConfig): Promise<void> 
   // dance avoids both: the file is 0600 before it is ever visible at
   // `target`, and rename is atomic on POSIX.
   const tmp = path.join(dir, `.config.json.${process.pid}-${crypto.randomBytes(6).toString("hex")}.tmp`);
-  await writeFile(tmp, `${JSON.stringify(config, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-  await chmod(tmp, 0o600);
-  await rename(tmp, target);
+  try {
+    await writeFile(tmp, `${JSON.stringify(config, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    await chmod(tmp, 0o600);
+    await rename(tmp, target);
+  } catch (error) {
+    // Best-effort cleanup so a failed save doesn't leave temp-file debris in
+    // the config directory. The original error is what the caller needs, so
+    // a failing unlink (e.g. the write itself never created the file) is
+    // swallowed rather than allowed to mask it.
+    await unlink(tmp).catch(() => {});
+    throw error;
+  }
 }
 
 const WATCH_DEBOUNCE_MS = 250;

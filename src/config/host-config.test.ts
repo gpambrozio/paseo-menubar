@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { configPath, loadConfig, saveConfig, watchConfig } from "./host-config.js";
@@ -86,6 +86,20 @@ describe("host config", () => {
 
     const after = await stat(configPath(dir));
     expect(after.mode & 0o777).toBe(0o600);
+  });
+
+  it("cleans up the temp file when the rename step fails", async () => {
+    const dir = await tempDir();
+    // Occupy the target path with a non-empty directory so rename(tmp, target)
+    // fails deterministically (EISDIR / ENOTEMPTY) instead of succeeding.
+    await mkdir(configPath(dir));
+    await writeFile(path.join(configPath(dir), "occupied"), "x", "utf8");
+
+    await expect(saveConfig(dir, { version: 1, hosts: [] })).rejects.toThrow();
+
+    const entries = await readdir(dir);
+    const debris = entries.filter((name) => name.includes(".tmp"));
+    expect(debris).toEqual([]);
   });
 
   it("notifies once when the file changes, debounced", async () => {
