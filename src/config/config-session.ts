@@ -80,7 +80,7 @@ export function createConfigSession(options: {
         hosts: [
           {
             id: createId(),
-            label: "This machine",
+            label: "Local",
             type: "directTcp",
             endpoint: DEFAULT_LOCAL_ENDPOINT,
             useTls: false,

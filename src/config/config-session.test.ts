@@ -62,7 +62,7 @@ describe("config session first run", () => {
       hosts: [
         {
           id: "seed-id",
-          label: "This machine",
+          label: "Local",
           type: "directTcp",
           endpoint: "127.0.0.1:6767",
           useTls: false,
