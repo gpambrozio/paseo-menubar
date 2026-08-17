@@ -1,8 +1,9 @@
 import { Menu, Tray, nativeImage } from "electron";
 import path from "node:path";
+import type { WorkspaceStateBucket } from "@getpaseo/protocol/messages";
 import type { HostStore } from "../daemon/host-store.js";
 import { buildMenuTemplate, type MenuHandlers } from "./menu-template.js";
-import { deriveTrayViewModel, type TrayIconState } from "./view-model.js";
+import { deriveTrayViewModel, ICON_FILE_PREFIXES, type TrayIconState } from "./view-model.js";
 
 const REBUILD_DEBOUNCE_MS = 120;
 
@@ -18,8 +19,12 @@ export function createTrayPresenter(options: {
 }): TrayPresenter {
   const { store, assetsDir, handlers, isLoginItemEnabled } = options;
 
-  function loadIcon(name: string): Electron.NativeImage {
-    const file = path.join(assetsDir, `${name}Template.png`);
+  function iconPath(bucket: WorkspaceStateBucket): string {
+    return path.join(assetsDir, `${ICON_FILE_PREFIXES[bucket]}Template.png`);
+  }
+
+  function loadIcon(bucket: WorkspaceStateBucket): Electron.NativeImage {
+    const file = iconPath(bucket);
     const image = nativeImage.createFromPath(file);
     // A missing file yields an empty image rather than an error, and an empty
     // image yields a status item with no visible icon -- no way to open the
@@ -30,13 +35,15 @@ export function createTrayPresenter(options: {
   }
 
   const icons: Record<TrayIconState, Electron.NativeImage> = {
-    idle: loadIcon("idle"),
-    working: loadIcon("working"),
+    needs_input: loadIcon("needs_input"),
+    failed: loadIcon("failed"),
     attention: loadIcon("attention"),
+    running: loadIcon("running"),
+    done: loadIcon("done"),
   };
   for (const image of Object.values(icons)) image.setTemplateImage(true);
 
-  const tray = new Tray(icons.idle);
+  const tray = new Tray(icons.done);
   let timer: NodeJS.Timeout | null = null;
 
   function render(): void {
@@ -50,7 +57,10 @@ export function createTrayPresenter(options: {
     tray.setToolTip(model.count > 0 ? `Paseo — ${model.count} need you` : "Paseo");
     tray.setContextMenu(
       Menu.buildFromTemplate(
-        buildMenuTemplate(model, handlers, { loginItemEnabled: isLoginItemEnabled() }),
+        buildMenuTemplate(model, handlers, {
+          loginItemEnabled: isLoginItemEnabled(),
+          iconFor: iconPath,
+        }),
       ),
     );
   }

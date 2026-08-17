@@ -1,4 +1,5 @@
 import type { MenuItemConstructorOptions } from "electron";
+import type { WorkspaceStateBucket } from "@getpaseo/protocol/messages";
 import type { HostStatus } from "../daemon/host-store.js";
 import {
   SECTION_LABELS,
@@ -6,6 +7,13 @@ import {
   type TrayViewModel,
   type TrayWorkspaceRow,
 } from "./view-model.js";
+
+/**
+ * Resolves a bucket to its icon, as a path or a `NativeImage`. Injected by
+ * `tray-presenter.ts`, the module that knows `assetsDir` — this file stays
+ * pure and never touches the filesystem or loads a `NativeImage` itself.
+ */
+export type IconResolver = (bucket: WorkspaceStateBucket) => Electron.MenuItemConstructorOptions["icon"];
 
 export interface MenuHandlers {
   onOpenWorkspace: (row: TrayWorkspaceRow) => void;
@@ -48,13 +56,17 @@ function rowItem(row: TrayWorkspaceRow, handlers: MenuHandlers): MenuItemConstru
  * A disabled heading, then the section's rows. No submenus: the sidebar puts
  * every bucket at the same level, and a submenu would hide one section behind a
  * hover the other four do not need.
+ *
+ * The heading carries the bucket's icon, matching the sidebar, which shows a
+ * glyph per section.
  */
 function sectionItems(
   section: TrayMenuSection,
   handlers: MenuHandlers,
+  iconFor: IconResolver,
 ): MenuItemConstructorOptions[] {
   const items: MenuItemConstructorOptions[] = [
-    { label: SECTION_LABELS[section.bucket], enabled: false },
+    { label: SECTION_LABELS[section.bucket], enabled: false, icon: iconFor(section.bucket) },
     ...section.rows.map((row) => rowItem(row, handlers)),
   ];
   if (section.overflow > 0) {
@@ -67,7 +79,7 @@ function sectionItems(
 export function buildMenuTemplate(
   model: TrayViewModel,
   handlers: MenuHandlers,
-  options: { loginItemEnabled: boolean },
+  options: { loginItemEnabled: boolean; iconFor: IconResolver },
 ): MenuItemConstructorOptions[] {
   const items: MenuItemConstructorOptions[] = [];
 
@@ -86,7 +98,9 @@ export function buildMenuTemplate(
   if (model.sections.length === 0) {
     items.push({ label: "No workspaces", enabled: false });
   } else {
-    for (const section of model.sections) items.push(...sectionItems(section, handlers));
+    for (const section of model.sections) {
+      items.push(...sectionItems(section, handlers, options.iconFor));
+    }
   }
 
   // The seed page has a ceiling. Reaching it means these rows are a subset, and

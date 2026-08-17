@@ -6,7 +6,14 @@ import type {
 } from "@getpaseo/protocol/messages";
 import type { HostSnapshot, HostStatus } from "../daemon/host-store.js";
 
-export type TrayIconState = "idle" | "working" | "attention";
+/**
+ * The tray icon is always one bucket's icon: the highest-priority non-empty
+ * one, or `done` — the Paseo mark — when there are no workspaces at all. This
+ * used to be its own three-value scheme (idle/working/attention); five
+ * one-per-bucket icons made that a second vocabulary next to `SECTION_ORDER`
+ * for no reason, so it is gone.
+ */
+export type TrayIconState = WorkspaceStateBucket;
 
 /**
  * Section order and labels, copied verbatim from `STATUS_BUCKET_ORDER` and
@@ -33,6 +40,20 @@ export const SECTION_LABELS: Record<WorkspaceStateBucket, string> = {
   attention: "Ready to review",
   running: "Working",
   done: "Done",
+};
+
+/**
+ * The generated icon file's name prefix for each bucket, camelCase so it
+ * stays a valid identifier — `needs_input` isn't one. `scripts/make-icons.mjs`
+ * writes `${prefix}Template.png` / `${prefix}Template@2x.png`; this map is the
+ * one place the rasterizer's naming and the tray/menu loaders agree on it.
+ */
+export const ICON_FILE_PREFIXES: Record<WorkspaceStateBucket, string> = {
+  needs_input: "needsInput",
+  failed: "failed",
+  attention: "attention",
+  running: "running",
+  done: "done",
 };
 
 /**
@@ -158,7 +179,6 @@ export function deriveTrayViewModel(
   const live = hosts.filter((host) => host.status === "connected");
 
   const rowsByBucket = new Map<WorkspaceStateBucket, TrayWorkspaceRow[]>();
-  let running = 0;
   let counted = 0;
 
   for (const host of live) {
@@ -183,7 +203,6 @@ export function deriveTrayViewModel(
       if (existing) existing.push(row);
       else rowsByBucket.set(bucket, [row]);
       if (COUNTED_BUCKETS.has(bucket)) counted += 1;
-      if (bucket === "running") running += 1;
     }
   }
 
@@ -191,7 +210,11 @@ export function deriveTrayViewModel(
     buildSection(bucket, rowsByBucket.get(bucket) ?? []),
   ).filter((section): section is TrayMenuSection => section !== null);
 
-  const icon: TrayIconState = counted > 0 ? "attention" : running > 0 ? "working" : "idle";
+  // `sections` is already in SECTION_ORDER and only holds non-empty buckets,
+  // so its first entry is the highest-priority non-empty bucket. No
+  // workspaces at all falls back to `done`, the Paseo mark, the resting
+  // state.
+  const icon: TrayIconState = sections[0]?.bucket ?? "done";
 
   return {
     icon,
