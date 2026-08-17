@@ -108,22 +108,34 @@ describe("deriveTrayViewModel", () => {
     expect(model.icon).toBe("attention");
   });
 
-  it("orders sections the way the Paseo sidebar does and omits empty ones", () => {
+  it("orders sections the way the Paseo sidebar does", () => {
+    // All five buckets, supplied in an order that matches none of them, so
+    // every position in SECTION_ORDER is pinned. Leaving one out here is how a
+    // reordered bucket slips through, and a section order that drifts from the
+    // sidebar's defeats the whole point of listing workspaces.
     const model = deriveTrayViewModel([
       host([
         workspace("e", { status: "done" }),
         workspace("d", { status: "running" }),
         workspace("c", { status: "attention" }),
+        workspace("b", { status: "failed" }),
         workspace("a", { status: "needs_input" }),
       ]),
     ]);
-    // No `failed` workspace, so no `Failed` section.
     expect(model.sections.map((s) => s.bucket)).toEqual([
       "needs_input",
+      "failed",
       "attention",
       "running",
       "done",
     ]);
+  });
+
+  it("omits sections with no workspaces in them", () => {
+    const model = deriveTrayViewModel([
+      host([workspace("a", { status: "needs_input" }), workspace("e", { status: "done" })]),
+    ]);
+    expect(model.sections.map((s) => s.bucket)).toEqual(["needs_input", "done"]);
   });
 
   it("puts done workspaces in a flat section, not a submenu", () => {

@@ -56,7 +56,7 @@ export function createHostFleet(options: {
 
   const connections = new Map<string, HostConnection>();
   /**
-   * The entries behind the live connections. Kept because a `TrayAgentRow`
+   * The entries behind the live connections. Kept because a `TrayWorkspaceRow`
    * carries only a `hostId`, and both the web fallback and the per-host retry
    * need the entry itself.
    */
