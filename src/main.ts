@@ -14,6 +14,7 @@ import { hostEntryFromPairingUrl } from "./config/pairing.js";
 import { defaultDesktopAppInstalled, openAgent, openApp } from "./launch/open-agent.js";
 import { createTrayPresenter, type TrayPresenter } from "./tray/tray-presenter.js";
 import type { TrayAgentRow } from "./tray/view-model.js";
+import { errorText } from "./error-text.js";
 
 const DEFAULT_LOCAL_ENDPOINT = "127.0.0.1:6767";
 
@@ -22,10 +23,6 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   const store = new AgentStore();
   let configDir = "";
-
-  function errorText(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
-  }
 
   function showError(title: string, error: unknown): void {
     dialog.showErrorBox(title, errorText(error));
@@ -102,7 +99,7 @@ if (!app.requestSingleInstanceLock()) {
     } catch (error) {
       dialog.showErrorBox(
         "Paseo Icon",
-        `That pairing link is malformed.\n\n${error instanceof Error ? error.message : String(error)}`,
+        `That pairing link is malformed.\n\n${errorText(error)}`,
       );
       return;
     }
@@ -199,7 +196,7 @@ if (!app.requestSingleInstanceLock()) {
         // than running invisibly with no indicator and no menu.
         dialog.showErrorBox(
           "Paseo Icon — failed to start",
-          error instanceof Error ? error.message : String(error),
+          errorText(error),
         );
         app.quit();
         return;
@@ -225,7 +222,7 @@ if (!app.requestSingleInstanceLock()) {
         // correct display for this state, not a reason to crash.
         dialog.showErrorBox(
           "Paseo Icon — configuration error",
-          error instanceof Error ? error.message : String(error),
+          errorText(error),
         );
       }
     })
@@ -235,7 +232,7 @@ if (!app.requestSingleInstanceLock()) {
       // background menu-bar app must never die silently.
       dialog.showErrorBox(
         "Paseo Icon — failed to start",
-        error instanceof Error ? error.message : String(error),
+        errorText(error),
       );
     });
 

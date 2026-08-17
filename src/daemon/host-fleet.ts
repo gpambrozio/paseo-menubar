@@ -1,6 +1,7 @@
 import { hostsFingerprint, type AppConfig, type HostEntry } from "../config/host-config.js";
 import type { AgentStore } from "./agent-store.js";
 import { createHostConnection, type HostConnection } from "./host-connection.js";
+import { errorText } from "../error-text.js";
 
 export interface HostFleet {
   /**
@@ -16,10 +17,6 @@ export interface HostFleet {
   hostIds(): string[];
   /** Fire-and-forget teardown for app shutdown. */
   closeAll(): void;
-}
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 /**

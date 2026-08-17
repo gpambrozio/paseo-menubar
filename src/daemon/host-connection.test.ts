@@ -103,11 +103,6 @@ interface Harness {
 }
 
 /**
- * A pino destination that counts log lines containing `needle`, so a test can
- * observe how many times the daemon rejected a connection attempt without
- * reaching into daemon internals.
- */
-/**
  * The daemon logs a page of speech-provider reconciliation warnings on every
  * boot, and this suite boots one per test. They go nowhere rather than being
  * silenced at the pino level, so a test that supplies its own logger — the
@@ -125,6 +120,11 @@ function createDiscardingLogger(): pino.Logger {
   );
 }
 
+/**
+ * A pino destination that counts log lines containing `needle`, so a test can
+ * observe how many times the daemon rejected a connection attempt without
+ * reaching into daemon internals.
+ */
 function createLogCounter(needle: string): { logger: pino.Logger; count: () => number } {
   let count = 0;
   const stream = new Writable({
