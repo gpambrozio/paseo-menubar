@@ -24,6 +24,14 @@ if (!app.requestSingleInstanceLock()) {
   const connections = new Map<string, HostConnection>();
   let configDir = "";
 
+  function errorText(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+  }
+
+  function showError(title: string, error: unknown): void {
+    dialog.showErrorBox(title, errorText(error));
+  }
+
   async function ensureConfig(): Promise<AppConfig> {
     try {
       const config = await loadConfig(configDir);
@@ -102,18 +110,46 @@ if (!app.requestSingleInstanceLock()) {
       return;
     }
 
-    const config = await loadConfig(configDir);
-    config.hosts.push(entry);
-    // The config watcher is the single reload path; writing is enough.
-    await saveConfig(configDir, config);
+    // Reading and writing the config can both fail on things the user did not
+    // do here -- an unparseable config.json, a read-only config directory --
+    // and this runs from a menu click, so an escaping rejection would kill the
+    // process rather than surface anywhere.
+    try {
+      const config = await loadConfig(configDir);
+      config.hosts.push(entry);
+      // The config watcher is the single reload path; writing is enough.
+      await saveConfig(configDir, config);
+    } catch (error) {
+      dialog.showErrorBox(
+        "Paseo Icon — could not add host",
+        `${configPath(configDir)}\n\n${errorText(error)}`,
+      );
+      return;
+    }
     await dialog.showMessageBox({ message: `Added host "${entry.label}".` });
+  }
+
+  /**
+   * `shell.openExternal` returns a promise that rejects when the OS has no
+   * handler for the URL, and `paseo:` is registered only by the installed
+   * desktop app. Electron's main process follows Node's throw-on-unhandled-
+   * rejection default, so discarding that promise turns "Paseo is not
+   * installed" into "the tray disappears". Every open goes through here.
+   */
+  function openExternal(url: string): void {
+    shell.openExternal(url).catch((error) => {
+      dialog.showErrorBox(
+        "Paseo Icon — could not open Paseo",
+        `${url}\n\n${errorText(error)}\n\nInstall the Paseo desktop app to open agents from the menu bar.`,
+      );
+    });
   }
 
   function handleOpenAgent(row: TrayAgentRow): void {
     if (!row.serverId) return;
     openAgent(
       { serverId: row.serverId, agentId: row.agentId },
-      { desktopAppInstalled: defaultDesktopAppInstalled, openExternal: (url) => void shell.openExternal(url) },
+      { desktopAppInstalled: defaultDesktopAppInstalled, openExternal },
     );
   }
 
@@ -130,7 +166,10 @@ if (!app.requestSingleInstanceLock()) {
           isLoginItemEnabled: () => app.getLoginItemSettings().openAtLogin,
           handlers: {
             onOpenAgent: handleOpenAgent,
-            onAddHostFromClipboard: () => void addHostFromClipboard(),
+            onAddHostFromClipboard: () =>
+              void addHostFromClipboard().catch((error) =>
+                showError("Paseo Icon — could not add host", error),
+              ),
             onEditConfig: () => void shell.openPath(configPath(configDir)),
             onToggleLoginItem: (enabled) => app.setLoginItemSettings({ openAtLogin: enabled }),
             onQuit: () => app.quit(),
