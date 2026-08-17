@@ -77,6 +77,13 @@ function buildClient(entry: HostEntry): DaemonClient {
 export function createHostConnection(options: {
   entry: HostEntry;
   store: AgentStore;
+  /**
+   * Test seam. Production builds a real `DaemonClient` from the entry; this
+   * keeps the SDK surface in this one module while letting tests drive
+   * connection transitions and failing seeds that a real daemon will not
+   * produce on demand.
+   */
+  createClient?: (entry: HostEntry) => DaemonClient;
 }): HostConnection {
   const { entry, store } = options;
   // The client is built before the host is registered: `buildClient` throws on
@@ -84,7 +91,7 @@ export function createHostConnection(options: {
   // host in the store with no connection that owns it, so nothing could ever
   // remove it. Throwing before `setHost` leaves the caller free to record the
   // failure however it likes.
-  const client = buildClient(entry);
+  const client = (options.createClient ?? buildClient)(entry);
   store.setHost(entry.id, entry.label);
   let closed = false;
   let seedRetryTimer: ReturnType<typeof setTimeout> | null = null;

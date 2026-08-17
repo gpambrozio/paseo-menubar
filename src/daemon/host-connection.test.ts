@@ -5,8 +5,97 @@ import os from "node:os";
 import path from "node:path";
 import pino from "pino";
 import { createPaseoDaemon, hashDaemonPassword } from "@getpaseo/server";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { AgentStore } from "./agent-store.js";
 import { createHostConnection } from "./host-connection.js";
+
+const localEntry = {
+  id: "h1",
+  label: "local",
+  type: "directTcp",
+  endpoint: "127.0.0.1:6767",
+  useTls: false,
+} as const;
+
+function agent(id: string): AgentSnapshotPayload {
+  return {
+    id,
+    provider: "claude",
+    cwd: `/work/${id}`,
+    model: null,
+    createdAt: "2026-08-16T00:00:00.000Z",
+    updatedAt: "2026-08-16T00:00:00.000Z",
+    lastUserMessageAt: null,
+    status: "idle",
+    capabilities: {},
+    currentModeId: null,
+    availableModes: [],
+    pendingPermissions: [],
+    persistence: null,
+    title: id,
+    labels: {},
+  } as AgentSnapshotPayload;
+}
+
+type ConnectionState = ReturnType<DaemonClient["getConnectionState"]>;
+
+/**
+ * Enough of `DaemonClient` for the connection to drive: connection
+ * transitions on demand, and a seed that can be made to fail. A real daemon
+ * will not reject `fetchAgents` on a healthy socket when asked to.
+ */
+class FakeClient {
+  state: ConnectionState = { status: "idle" };
+  seedFailures = 0;
+  hasMore = false;
+  agents: AgentSnapshotPayload[] = [];
+  readonly fetchOptions: unknown[] = [];
+  private readonly listeners = new Set<(state: ConnectionState) => void>();
+
+  asClient(): DaemonClient {
+    return this as unknown as DaemonClient;
+  }
+
+  setState(state: ConnectionState): void {
+    this.state = state;
+    for (const listener of this.listeners) listener(state);
+  }
+
+  getConnectionState(): ConnectionState {
+    return this.state;
+  }
+
+  subscribeConnectionStatus(listener: (state: ConnectionState) => void): () => void {
+    this.listeners.add(listener);
+    listener(this.state);
+    return () => this.listeners.delete(listener);
+  }
+
+  on(): () => void {
+    return () => undefined;
+  }
+
+  async connect(): Promise<void> {}
+
+  async close(): Promise<void> {}
+
+  getLastServerInfoMessage(): { serverId: string } {
+    return { serverId: "srv-1" };
+  }
+
+  async fetchAgents(options: unknown): Promise<unknown> {
+    this.fetchOptions.push(options);
+    if (this.seedFailures > 0) {
+      this.seedFailures -= 1;
+      throw new Error("seed failed");
+    }
+    return {
+      entries: this.agents.map((item) => ({ agent: item, project: null })),
+      pageInfo: { nextCursor: null, prevCursor: null, hasMore: this.hasMore },
+    };
+  }
+}
 
 interface Harness {
   port: number;
@@ -83,6 +172,93 @@ async function waitFor(predicate: () => boolean, timeoutMs = 15_000): Promise<vo
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+});
+
+describe("createHostConnection seeding", () => {
+  function connect(client: FakeClient, store: AgentStore) {
+    const connection = createHostConnection({
+      entry: localEntry,
+      store,
+      createClient: () => client.asClient(),
+    });
+    cleanups.push(() => connection.close());
+    client.setState({ status: "connecting", attempt: 0 });
+    client.setState({ status: "connected" });
+    return connection;
+  }
+
+  it("retries a failed seed instead of pinning a live host at disconnected", async () => {
+    const store = new AgentStore();
+    const client = new FakeClient();
+    client.seedFailures = 1;
+    client.agents = [agent("a1")];
+    connect(client, store);
+
+    // The socket stays up throughout, so nothing else would ever seed again.
+    await waitFor(() => store.snapshot()[0]?.status === "disconnected");
+    await waitFor(() => store.snapshot()[0]?.status === "connected");
+    expect(store.snapshot()[0]?.agents.map((item) => item.id)).toEqual(["a1"]);
+    expect(client.fetchOptions.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("seeds with the same rule the live subscription applies", async () => {
+    const store = new AgentStore();
+    const client = new FakeClient();
+    connect(client, store);
+
+    await waitFor(() => store.snapshot()[0]?.status === "connected");
+    // `scope: "active"` would narrow harder than the subscription does, so
+    // streamed-in agents would disappear at the next re-seed.
+    expect(client.fetchOptions[0]).not.toHaveProperty("scope");
+    expect(client.fetchOptions[0]).toHaveProperty("subscribe");
+  });
+
+  it("carries the page's hasMore through as a visible cap", async () => {
+    const store = new AgentStore();
+    const client = new FakeClient();
+    client.hasMore = true;
+    client.agents = [agent("a1")];
+    connect(client, store);
+
+    await waitFor(() => store.snapshot()[0]?.status === "connected");
+    expect(store.snapshot()[0]?.truncated).toBe(true);
+  });
+
+  it("reports each connection transition, including connecting", async () => {
+    const store = new AgentStore();
+    const client = new FakeClient();
+    const seen: string[] = [];
+    store.subscribe(() => {
+      const status = store.snapshot()[0]?.status;
+      if (status && seen[seen.length - 1] !== status) seen.push(status);
+    });
+    connect(client, store);
+
+    await waitFor(() => store.snapshot()[0]?.status === "connected");
+    client.setState({ status: "disconnected", reason: "Transport closed" });
+    await waitFor(() => store.snapshot()[0]?.status === "disconnected");
+    client.setState({ status: "connecting", attempt: 1 });
+
+    await waitFor(() => store.snapshot()[0]?.status === "connecting");
+    expect(seen).toEqual(["connecting", "connected", "disconnected", "connecting"]);
+  });
+
+  it("classifies an auth rejection as unauthorized rather than disconnected", async () => {
+    const store = new AgentStore();
+    const client = new FakeClient();
+    connect(client, store);
+
+    await waitFor(() => store.snapshot()[0]?.status === "connected");
+    client.setState({ status: "disconnected", reason: "Incorrect password" });
+
+    await waitFor(() => store.snapshot()[0]?.status === "unauthorized");
+    // Retrying a wrong password behind backoff forever is the failure mode to
+    // avoid: later transitions must not move the host off `unauthorized`.
+    client.setState({ status: "connecting", attempt: 1 });
+    client.setState({ status: "connected" });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(store.snapshot()[0]?.status).toBe("unauthorized");
+  });
 });
 
 describe("createHostConnection", () => {
