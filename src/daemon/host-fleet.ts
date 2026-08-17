@@ -89,16 +89,25 @@ export function createHostFleet(options: {
    * Creates one host's connection. Returns a failure description, or null.
    *
    * Nothing here closes a connection already registered under `entry.id`,
-   * because there can never be one: `AppConfigSchema` rejects duplicate ids,
+   * because there should never be one: `AppConfigSchema` rejects duplicate ids,
    * `applyHosts` clears the map before rebuilding, and `retry` awaits the old
-   * connection's `close()` first. The guard that used to sit here closed the
-   * replaced connection *after* constructing the new one, and `close()`'s tail
-   * calls `store.removeHost` on the same id the new connection had just
-   * registered — so had it ever fired it would have left a live host that the
-   * store could no longer see.
+   * connection's `close()` first. Closing it here is not an option either: that
+   * is what the guard which used to sit here did, closing the replaced
+   * connection *after* constructing the new one, and `close()`'s tail calls
+   * `store.removeHost` on the same id the new connection had just registered —
+   * so had it ever fired it would have left a live host the store could no
+   * longer see. Closing it *first* would make `connectHost` async, and with it
+   * every caller.
+   *
+   * The invariant is therefore checked rather than repaired: a call site that
+   * breaks it gets an unusable host and a named configuration error, instead of
+   * a live connection that `connections.set` overwrote and nothing can close.
    */
   function connectHost(entry: HostEntry): string | null {
     try {
+      if (connections.has(entry.id)) {
+        throw new Error(`a connection for host id "${entry.id}" already exists`);
+      }
       connections.set(entry.id, createConnection({ entry, store }));
       return null;
     } catch (error) {

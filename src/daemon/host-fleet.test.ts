@@ -158,6 +158,22 @@ describe("host fleet entry failures", () => {
     expect(store.snapshot()).toMatchObject([{ hostId: "bad", label: "laptop", status: "invalid" }]);
   });
 
+  it("refuses to build a second connection under an id that already has one", async () => {
+    const connections = createFakeConnections();
+    const { fleet, store, failures } = createFleet(connections);
+
+    // `AppConfigSchema` rejects this, so it can only arrive from a call site
+    // that skipped the schema. The connection map would otherwise overwrite
+    // the first entry's connection, leaking a socket nothing can close.
+    await fleet.apply(
+      config(directEntry("dup", { label: "first" }), directEntry("dup", { label: "second" })),
+    );
+
+    expect(connections.ids()).toEqual(["dup"]);
+    expect(failures.at(-1)).toEqual(['second: a connection for host id "dup" already exists']);
+    expect(store.snapshot()).toMatchObject([{ hostId: "dup", status: "invalid" }]);
+  });
+
   it("clears the failure list once the entries are fixed", async () => {
     const connections = createFakeConnections({ failOn: ["bad"] });
     const { fleet, failures } = createFleet(connections);
