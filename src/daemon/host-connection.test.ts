@@ -107,6 +107,24 @@ interface Harness {
  * observe how many times the daemon rejected a connection attempt without
  * reaching into daemon internals.
  */
+/**
+ * The daemon logs a page of speech-provider reconciliation warnings on every
+ * boot, and this suite boots one per test. They go nowhere rather than being
+ * silenced at the pino level, so a test that supplies its own logger — the
+ * auth-rejection test counts the daemon's rejection lines — still sees
+ * everything the daemon emits.
+ */
+function createDiscardingLogger(): pino.Logger {
+  return pino(
+    { level: "warn" },
+    new Writable({
+      write(_chunk, _encoding, callback) {
+        callback();
+      },
+    }),
+  );
+}
+
 function createLogCounter(needle: string): { logger: pino.Logger; count: () => number } {
   let count = 0;
   const stream = new Writable({
@@ -143,7 +161,7 @@ async function startDaemon(options?: {
       appBaseUrl: "https://app.paseo.sh",
       ...(options?.auth ? { auth: options.auth } : {}),
     },
-    options?.logger ?? pino({ level: "warn" }),
+    options?.logger ?? createDiscardingLogger(),
   );
 
   await daemon.start();
