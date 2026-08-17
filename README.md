@@ -1,8 +1,8 @@
 # Paseo Icon
 
-A menu-bar indicator for [Paseo](https://paseo.sh) agents on macOS. It shows whether
-your agents are idle, working, or waiting for you, and lets you jump straight
-to one from the tray — no window, no dock icon.
+A menu-bar indicator for [Paseo](https://paseo.sh) workspaces on macOS. It shows
+which of your workspaces need input, failed, are ready to review, or are still
+working, and lets you jump straight to one from the tray — no window, no dock icon.
 
 Licensed under AGPL-3.0-or-later. See [LICENSE](LICENSE).
 

@@ -67,22 +67,22 @@ function host(
 }
 
 describe("deriveTrayViewModel", () => {
-  it("is idle with no workspaces", () => {
+  it("shows the Paseo mark when there are no workspaces at all", () => {
     const model = deriveTrayViewModel([host([])]);
-    expect(model.icon).toBe("idle");
+    expect(model.icon).toBe("done");
     expect(model.count).toBe(0);
   });
 
-  it("is idle when everything is done, because done is the resting state", () => {
+  it("shows the done icon when everything is done, because done is the resting state", () => {
     const model = deriveTrayViewModel([host([workspace("w1"), workspace("w2")])]);
-    expect(model.icon).toBe("idle");
+    expect(model.icon).toBe("done");
     expect(model.count).toBe(0);
     expect(model.sections.map((s) => s.bucket)).toEqual(["done"]);
   });
 
-  it("is working when a workspace is running", () => {
+  it("shows the running icon when a workspace is running and nothing outranks it", () => {
     const model = deriveTrayViewModel([host([workspace("w1", { status: "running" })])]);
-    expect(model.icon).toBe("working");
+    expect(model.icon).toBe("running");
     expect(model.count).toBe(0);
   });
 
@@ -105,7 +105,22 @@ describe("deriveTrayViewModel", () => {
       ]),
     ]);
     expect(model.count).toBe(3);
-    expect(model.icon).toBe("attention");
+    // needs_input outranks every other present bucket, so it is the icon.
+    expect(model.icon).toBe("needs_input");
+  });
+
+  it("picks the icon of the highest-priority non-empty bucket, section order, not just any present one", () => {
+    // failed, running, and done are all present; only failed outranks the
+    // others in SECTION_ORDER, so only the ordering rule -- not "any present
+    // bucket" -- can produce this result.
+    const model = deriveTrayViewModel([
+      host([
+        workspace("a", { status: "done" }),
+        workspace("b", { status: "running" }),
+        workspace("c", { status: "failed" }),
+      ]),
+    ]);
+    expect(model.icon).toBe("failed");
   });
 
   it("orders sections the way the Paseo sidebar does", () => {
@@ -158,7 +173,7 @@ describe("deriveTrayViewModel", () => {
     const model = deriveTrayViewModel([
       host([workspace("w1", { status: "needs_input", archivingAt: "2026-08-16T00:00:00.000Z" })]),
     ]);
-    expect(model.icon).toBe("idle");
+    expect(model.icon).toBe("done");
     expect(model.count).toBe(0);
     expect(model.sections).toEqual([]);
   });
@@ -167,7 +182,7 @@ describe("deriveTrayViewModel", () => {
     const model = deriveTrayViewModel([
       host([workspace("w1", { status: "needs_input" })], { status: "disconnected" }),
     ]);
-    expect(model.icon).toBe("idle");
+    expect(model.icon).toBe("done");
     expect(model.count).toBe(0);
   });
 
