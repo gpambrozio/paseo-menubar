@@ -1,9 +1,12 @@
 # CLAUDE.md
 
-Paseo Icon is a macOS menu-bar indicator for [Paseo](https://paseo.sh) coding agents. It
-shows whether any agent needs you, across every configured host, and deep-links into the
-Paseo desktop app on click. It is a status indicator and launcher — it never runs agents
-itself.
+Paseo Icon is a macOS menu-bar indicator for [Paseo](https://paseo.sh) workspaces. It
+shows whether any workspace needs you, across every configured host, and deep-links into
+the Paseo desktop app on click. It is a status indicator and launcher — it never runs
+agents itself.
+
+It mirrors the Paseo sidebar: same rows, same five state buckets, same labels. The state
+comes from the daemon, never from a client-side derivation. The design doc explains why.
 
 It is a **separate project from the `getpaseo/paseo` repo** and depends on that project
 only through published npm packages and supported surfaces. Nothing here can assume an
@@ -39,10 +42,10 @@ injection, and is tested without an Electron harness.
 | `src/config/pairing.ts` | Pairing URL to host entry. |
 | `src/daemon/host-connection.ts` | One host: connect, seed, subscribe, reconnect, report status. **All SDK use lives here.** |
 | `src/daemon/host-fleet.ts` | The set of connections: apply a config, isolate a bad entry, retry, serialize rebuilds. |
-| `src/daemon/agent-store.ts` | Replicated agent map keyed by host. |
-| `src/tray/view-model.ts` | Store state to icon, count, and sections. |
+| `src/daemon/host-store.ts` | Replicated workspaces and agents, keyed by host. |
+| `src/tray/view-model.ts` | Store state to icon, count, sections, and click targets. |
 | `src/tray/menu-template.ts` | View model to Electron menu template. |
-| `src/launch/open-agent.ts` | Deep link, with a browser fallback. |
+| `src/launch/open-paseo.ts` | Deep link, with a browser fallback. |
 
 `host-fleet.ts` and `config-session.ts` exist because the first cut put their logic in
 `main.ts`, where nothing could test it. If you find yourself adding a decision to
@@ -64,6 +67,14 @@ injection, and is tested without an Electron harness.
   `Configuration error` row. A `void`-ed promise that can reject is a bug — Node throws on
   unhandled rejections, and two such crashes have already been fixed here.
 - **No silent caps.** Any truncated list renders a visible overflow row.
+- **Never derive a workspace's state.** Render `WorkspaceDescriptorPayload.status`, the
+  bucket the daemon computed. The rule lives in the daemon and changes there; a second
+  copy here is a second answer, and no test in either repo would catch the day they
+  diverge.
+- **Section order and labels are copied, not invented.** They come from
+  `STATUS_BUCKET_ORDER` and `STATUS_BUCKET_LABELS` in
+  `packages/app/src/hooks/sidebar-status-view-model.ts` upstream. Paseo's glossary rule
+  is "UI label wins, no synonyms", so the tray says what the sidebar says.
 - **`config.json` is written `0600`** via temp-file + `rename()`. It holds TCP passwords
   and relay keys, and the app's own watcher reads it.
 
@@ -71,7 +82,7 @@ injection, and is tested without an Electron harness.
 
 ```bash
 SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm install   # Homebrew libvips breaks sharp's prebuild
-npx vitest run                              # 112 tests, 9 files
+npx vitest run                              # 139 tests, 9 files
 npm run typecheck
 ```
 
@@ -96,10 +107,11 @@ narrating a check you did not perform.
 
 ## Known issues
 
-- An agent whose attention reason is `finished` can be capped out of the seed past 200
-  active agents on one host. The daemon's `status_priority` scoring has no
-  `requiresAttention` branch, so closing this needs a daemon-side sort key. The cap stays
-  visible in the menu, so the undercount is never silent.
+- Past 200 agents on one host, an agent can be capped out of the seed and its workspace
+  then opens in the browser instead of the app. The daemon's `status_priority` scoring
+  has no `requiresAttention` branch, so an agent whose attention reason is `finished`
+  sorts last and goes first. Closing this needs a daemon-side sort key. The cap stays
+  visible in the menu, so nothing is lost silently.
 - The `addHost` save-failure test assumes a non-root runner.
 - `appId` and `publish.owner` in `electron-builder.yml` are unconfirmed, and `notarize` is
   off. All three need a decision before distributing to anyone else.
