@@ -342,11 +342,12 @@ describe("host fleet web base URLs", () => {
 });
 
 describe("host fleet web fallback", () => {
-  it("picks the first live direct host in config order, skipping a relay", async () => {
+  it("picks the first connected direct host in config order, skipping a relay", async () => {
     const connections = createFakeConnections();
-    const { fleet } = createFleet(connections);
+    const { fleet, store } = createFleet(connections);
 
     await fleet.apply(config(relayEntry, directEntry("h1", { endpoint: "192.168.1.4:6767" })));
+    store.setStatus("h1", "connected");
 
     expect(fleet.firstWebBaseUrl()).toBe("http://192.168.1.4:6767");
   });
@@ -357,20 +358,72 @@ describe("host fleet web fallback", () => {
     // with a URL `webBaseUrlFor` would happily compute. Offering that URL
     // would send the user to a host that never connected.
     const connections = createFakeConnections({ failOn: ["bad"] });
-    const { fleet } = createFleet(connections);
+    const { fleet, store } = createFleet(connections);
 
     await fleet.apply(config(directEntry("bad"), directEntry("good", { endpoint: "10.0.0.9:6767" })));
+    store.setStatus("good", "connected");
 
     expect(fleet.firstWebBaseUrl()).toBe("http://10.0.0.9:6767");
   });
 
   it("returns undefined when no host is both live and a direct connection", async () => {
     const connections = createFakeConnections({ failOn: ["bad"] });
-    const { fleet } = createFleet(connections);
+    const { fleet, store } = createFleet(connections);
 
     await fleet.apply(config(directEntry("bad"), relayEntry));
+    store.setStatus("r1", "connected");
 
     expect(fleet.firstWebBaseUrl()).toBeUndefined();
+  });
+
+  it("does not offer a host that is still connecting", async () => {
+    const connections = createFakeConnections();
+    const { fleet } = createFleet(connections);
+
+    await fleet.apply(config(directEntry("h1", { endpoint: "10.0.0.1:6767" })));
+    // Status stays at its default "connecting": the fake connection was
+    // built, but nothing ever reported it as answered.
+
+    expect(fleet.firstWebBaseUrl()).toBeUndefined();
+  });
+
+  it("does not offer a disconnected host", async () => {
+    const connections = createFakeConnections();
+    const { fleet, store } = createFleet(connections);
+
+    await fleet.apply(config(directEntry("h1", { endpoint: "10.0.0.1:6767" })));
+    store.setStatus("h1", "disconnected");
+
+    expect(fleet.firstWebBaseUrl()).toBeUndefined();
+  });
+
+  it("does not offer an unauthorized host", async () => {
+    const connections = createFakeConnections();
+    const { fleet, store } = createFleet(connections);
+
+    await fleet.apply(config(directEntry("h1", { endpoint: "10.0.0.1:6767" })));
+    store.setStatus("h1", "unauthorized");
+
+    expect(fleet.firstWebBaseUrl()).toBeUndefined();
+  });
+
+  it("skips connecting, disconnected, and unauthorized hosts to offer the one that is connected", async () => {
+    const connections = createFakeConnections();
+    const { fleet, store } = createFleet(connections);
+
+    await fleet.apply(
+      config(
+        directEntry("connecting", { endpoint: "10.0.0.1:6767" }),
+        directEntry("down", { endpoint: "10.0.0.2:6767" }),
+        directEntry("locked", { endpoint: "10.0.0.3:6767" }),
+        directEntry("up", { endpoint: "10.0.0.4:6767" }),
+      ),
+    );
+    store.setStatus("down", "disconnected");
+    store.setStatus("locked", "unauthorized");
+    store.setStatus("up", "connected");
+
+    expect(fleet.firstWebBaseUrl()).toBe("http://10.0.0.4:6767");
   });
 });
 

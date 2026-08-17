@@ -14,12 +14,14 @@ export interface HostFleet {
   /** The base URL of the host's own web UI, when it has one. */
   webBaseUrlFor(hostId: string): string | undefined;
   /**
-   * The web UI of the first live, connectable host, in config order — the
-   * fallback used to open Paseo when the desktop app is not installed.
-   * Skips hosts whose entry never became a live connection (shown as
-   * `invalid` in the tray): their endpoint has never answered, so offering
-   * it as the fallback would send the user to a host we already know is
-   * unreachable.
+   * The web UI of the first host that is actually `connected`, in config
+   * order — the fallback used to open Paseo when the desktop app is not
+   * installed. Skips any other status (`connecting`, `disconnected`,
+   * `unauthorized`, `invalid`): each of those still yields a defined URL
+   * from `webBaseUrlForEntry`, which would suppress `openAgent`'s
+   * `paseo://` deep-link fallback — the one that produces an actionable
+   * "install the Paseo desktop app" dialog — in favor of a browser tab that
+   * cannot load.
    */
   firstWebBaseUrl(): string | undefined;
   /** Fire-and-forget teardown for app shutdown. */
@@ -197,11 +199,13 @@ export function createHostFleet(options: {
       return entry ? webBaseUrlForEntry(entry) : undefined;
     },
     firstWebBaseUrl() {
+      // `connections.has(hostId)` only tells us a client was built; it stays
+      // true through `connecting`, `disconnected`, and `unauthorized` too.
+      // `status` is what actually tracks whether the daemon has answered, so
+      // it is the only check this needs.
+      const statuses = new Map(store.snapshot().map((host) => [host.hostId, host.status]));
       for (const [hostId, entry] of appliedHosts) {
-        // A failed entry stays in `appliedHosts` (it is recorded before
-        // `connectHost` is attempted) but never gets a live connection, so
-        // `connections` is the source of truth for "actually reachable".
-        if (!connections.has(hostId)) continue;
+        if (statuses.get(hostId) !== "connected") continue;
         const url = webBaseUrlForEntry(entry);
         if (url !== undefined) return url;
       }
