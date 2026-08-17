@@ -16,6 +16,19 @@ const PASEO_LOGO_PATH = path.join(ROOT, "assets", "paseo-logo.svg");
 // ever sees it.
 const LUCIDE_STROKE_WIDTH = 2.75;
 
+// The Paseo mark is a filled organic shape sitting among stroked geometric
+// glyphs, and straight from source it rendered smaller and lighter than all of
+// them -- 81% of the canvas at 29% ink, against 94-100% and 40-66% for the
+// Lucide set. Both numbers are corrected here rather than by editing the
+// vendored logo, so re-vendoring it from upstream stays a plain copy.
+//
+// Scale is about the artboard centre. Stroke is in viewBox units (the logo's
+// box is 700 wide) and dilates the filled path, which is what "thicker" means
+// for a shape with no strokes of its own. Past roughly stroke 24 the mark's
+// inner counters start closing up and it stops reading as the logo.
+const PASEO_MARK_SCALE = 1.15;
+const PASEO_MARK_STROKE = 16;
+
 // One entry per workspace status bucket, in the app's own section order.
 // `file` is the on-disk prefix -- camelCase so it stays a valid identifier,
 // unlike the bucket name itself (`needs_input`).
@@ -41,11 +54,26 @@ async function lucideMarkup(name) {
 
 async function paseoMarkMarkup() {
   const raw = await readFile(PASEO_LOGO_PATH, "utf8");
-  // The mark is a filled path, not a stroked one, so it needs no stroke
-  // handling. Template images use only the alpha channel, so the fill color
-  // is cosmetic either way, but a concrete black is conventional and keeps
-  // the source readable outside the tray too.
-  return raw.replace('fill="white"', 'fill="#000"');
+  // Template images use only the alpha channel, so the fill color is cosmetic,
+  // but a concrete black is conventional and keeps the source readable outside
+  // the tray. The stroke matches the fill so it fattens the shape rather than
+  // outlining it.
+  const painted = raw.replace(
+    'fill="white"',
+    `fill="#000" stroke="#000" stroke-width="${PASEO_MARK_STROKE}" stroke-linejoin="round"`,
+  );
+  if (painted === raw) {
+    // The vendored logo is a single `fill="white"` path; a re-vendored file that
+    // paints itself differently would silently skip both corrections.
+    throw new Error(`Expected a fill="white" path in ${PASEO_LOGO_PATH}`);
+  }
+  // Scaling about the centre keeps the mark where it is while it grows.
+  return painted
+    .replace(
+      "<path ",
+      `<g transform="translate(350,350) scale(${PASEO_MARK_SCALE}) translate(-350,-350)"><path `,
+    )
+    .replace("</svg>", "</g></svg>");
 }
 
 async function markupFor(source) {
