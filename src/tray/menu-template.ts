@@ -34,16 +34,8 @@ const STATUS_TEXT: Record<HostStatus, string> = {
   invalid: "invalid configuration",
 };
 
-function diffText(diff: TrayWorkspaceRow["diff"]): string | null {
-  if (!diff) return null;
-  if (diff.additions === 0 && diff.deletions === 0) return null;
-  return `+${diff.additions} −${diff.deletions}`;
-}
-
 function rowLabel(row: TrayWorkspaceRow): string {
   const parts = [row.label, row.projectName];
-  const diff = diffText(row.diff);
-  if (diff) parts.push(diff);
   if (row.hostLabel) parts.push(row.hostLabel);
   return parts.join("  ·  ");
 }

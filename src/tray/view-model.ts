@@ -81,7 +81,6 @@ export interface TrayWorkspaceRow {
   /** The workspace's resolved display name, the same one the sidebar shows. */
   label: string;
   projectName: string;
-  diff: { additions: number; deletions: number } | null;
   /** Null when only one host is configured. */
   hostLabel: string | null;
 }
@@ -246,7 +245,6 @@ export function deriveTrayViewModel(
         agentId: agents.get(workspace.id)?.[0]?.id ?? null,
         label: workspace.name,
         projectName: workspace.projectDisplayName,
-        diff: workspace.diffStat ?? null,
         hostLabel: showHostLabel ? hostName : null,
       };
       const existing = rowsByBucket.get(bucket);

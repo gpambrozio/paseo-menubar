@@ -49,7 +49,6 @@ function row(overrides: Partial<TrayWorkspaceRow> = {}): TrayWorkspaceRow {
     agentId: "a1",
     label: "fix-login",
     projectName: "paseo",
-    diff: null,
     hostLabel: null,
     ...overrides,
   };
@@ -113,20 +112,20 @@ describe("buildMenuTemplate", () => {
     expect(row1?.icon).toBeUndefined();
   });
 
-  it("renders a workspace row with its project, diff, and host, and opens it on click", () => {
+  it("renders a workspace row with its project and host, and opens it on click", () => {
     const model: TrayViewModel = {
       ...empty,
       sections: [
         {
           bucket: "needs_input",
-          rows: [row({ diff: { additions: 12, deletions: 3 }, hostLabel: "laptop" })],
+          rows: [row({ hostLabel: "laptop" })],
           overflow: 0,
         },
       ],
     };
     const template = buildMenuTemplate(model, handlers, menuOptions());
     const item = template.find((i) => i.label?.includes("fix-login"));
-    expect(item?.label).toBe("fix-login  ·  paseo  ·  +12 −3  ·  laptop");
+    expect(item?.label).toBe("fix-login  ·  paseo  ·  laptop");
     click(item);
     expect(handlers.onOpenWorkspace).toHaveBeenCalledWith(
       expect.objectContaining({ workspaceId: "w1", agentId: "a1" }),

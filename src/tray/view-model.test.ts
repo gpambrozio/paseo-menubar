@@ -198,18 +198,6 @@ describe("deriveTrayViewModel", () => {
     });
   });
 
-  it("carries the diff stat, and null when the daemon has none", () => {
-    const model = deriveTrayViewModel([
-      host([
-        workspace("w1", { diffStat: { additions: 12, deletions: 3 } }),
-        workspace("w2", { diffStat: null }),
-      ]),
-    ]);
-    const rows = model.sections[0]?.rows ?? [];
-    expect(rows[0]?.diff).toEqual({ additions: 12, deletions: 3 });
-    expect(rows[1]?.diff).toBeNull();
-  });
-
   it("omits the host label with a single host and includes it with two", () => {
     const single = deriveTrayViewModel([host([workspace("w1")])]);
     expect(single.sections[0]?.rows[0]?.hostLabel).toBeNull();

@@ -214,11 +214,11 @@ free. On Windows and Linux it goes in the tooltip and the menu header.
 
 ```
 Needs input
-  fix-login-redirect  ·  paseo  ·  +40 −12  ·  laptop
+  fix-login-redirect  ·  paseo  ·  laptop
 Failed
-  migrate-schema  ·  paseo  ·  +8 −2  ·  laptop
+  migrate-schema  ·  paseo  ·  laptop
 Ready to review
-  add-rate-limiting  ·  paseo-icon  ·  +120 −4  ·  studio
+  add-rate-limiting  ·  paseo-icon  ·  studio
 Working
   refactor-terminal-input  ·  paseo  ·  laptop
 Done
@@ -242,8 +242,10 @@ host-first grouping makes you scan several sections to find three workspaces.
 - Empty sections are omitted.
 - Each section caps at 15 rows with an explicit `…and N more` row that opens the app.
   Caps are visible, never silent.
-- Rows carry the workspace's own `name`, `projectDisplayName`, and `diffStat`. A zero
-  diff renders as nothing rather than `+0 −0`.
+- Rows carry the workspace's own `name` and `projectDisplayName`, and nothing else. The
+  daemon also reports `diffStat`, and the sidebar shows it, but a menu row is read at a
+  glance while deciding where to go — a churn count does not help with that decision, and
+  it made every row longer.
 - Workspaces with `archivingAt` set are excluded everywhere, including counts.
 - The seed page limit is 200 per list per host. Hitting it on workspaces means the rows
   are a subset, and a `Not all workspaces shown` line says so. Hitting it on agents
