@@ -282,47 +282,53 @@ describe("deriveTrayViewModel click targets", () => {
     expect(row?.agentId).toBeNull();
   });
 
+  // Every case below is arranged so the tiebreakers would pick a *different*
+  // agent than the rule under test. Ids and timestamps that happen to agree
+  // with the rule make a test that passes whether or not the rule is there.
   it("picks the most urgent agent by the daemon's own status priority", () => {
     // getAgentStatusPriority: pending permission 0, error 1, running 2,
     // initializing 3, everything else 4. Lower is more urgent.
     const row = rowFor(
       host([workspace("w1")], {
         agents: [
-          agent("idle", { status: "idle" }),
-          agent("running", { status: "running" }),
-          agent("errored", { status: "error" }),
+          agent("a-idle", { status: "idle", updatedAt: "2026-08-16T03:00:00.000Z" }),
+          agent("b-running", { status: "running", updatedAt: "2026-08-16T02:00:00.000Z" }),
+          agent("z-errored", { status: "error", updatedAt: "2026-08-16T01:00:00.000Z" }),
         ],
       }),
     );
-    expect(row?.agentId).toBe("errored");
+    // Last by id and oldest by updatedAt, so only priority can put it first.
+    expect(row?.agentId).toBe("z-errored");
   });
 
   it("ranks a pending permission above an error", () => {
     const row = rowFor(
       host([workspace("w1")], {
         agents: [
-          agent("errored", { status: "error" }),
-          agent("asking", {
+          agent("a-errored", { status: "error", updatedAt: "2026-08-16T02:00:00.000Z" }),
+          agent("z-asking", {
             status: "idle",
+            updatedAt: "2026-08-16T01:00:00.000Z",
             attentionReason: "permission",
             requiresAttention: true,
           }),
         ],
       }),
     );
-    expect(row?.agentId).toBe("asking");
+    expect(row?.agentId).toBe("z-asking");
   });
 
   it("breaks a priority tie on updatedAt, newest first, then on id", () => {
     const byTime = rowFor(
       host([workspace("w1")], {
         agents: [
-          agent("older", { status: "running", updatedAt: "2026-08-16T00:00:00.000Z" }),
-          agent("newer", { status: "running", updatedAt: "2026-08-16T01:00:00.000Z" }),
+          agent("a-older", { status: "running", updatedAt: "2026-08-16T00:00:00.000Z" }),
+          agent("z-newer", { status: "running", updatedAt: "2026-08-16T01:00:00.000Z" }),
         ],
       }),
     );
-    expect(byTime?.agentId).toBe("newer");
+    // Last by id, so only the timestamp can put it first.
+    expect(byTime?.agentId).toBe("z-newer");
 
     const byId = rowFor(
       host([workspace("w1")], {
@@ -332,6 +338,7 @@ describe("deriveTrayViewModel click targets", () => {
         ],
       }),
     );
+    // Arrival order would leave "b" first, so only the id rule can reorder.
     expect(byId?.agentId).toBe("a");
   });
 
@@ -339,8 +346,13 @@ describe("deriveTrayViewModel click targets", () => {
     const row = rowFor(
       host([workspace("w1")], {
         agents: [
-          agent("gone", { status: "error", archivedAt: "2026-08-16T00:00:00.000Z" }),
-          agent("live", { status: "idle" }),
+          // More urgent and newer, so only the archive filter can exclude it.
+          agent("gone", {
+            status: "error",
+            updatedAt: "2026-08-16T02:00:00.000Z",
+            archivedAt: "2026-08-16T00:00:00.000Z",
+          }),
+          agent("live", { status: "idle", updatedAt: "2026-08-16T01:00:00.000Z" }),
         ],
       }),
     );
