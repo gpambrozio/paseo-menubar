@@ -6,6 +6,33 @@ working, and lets you jump straight to one from the tray — no window, no dock 
 
 Licensed under AGPL-3.0-or-later. See [LICENSE](LICENSE).
 
+## What it looks like
+
+The tray icon is whichever bucket is most urgent across every host you watch,
+badged with how many workspaces are in it. The menu groups the workspaces the
+same way the Paseo sidebar does — **Needs input**, **Failed**, **Ready to
+review**, **Working**, **Done** — and clicking a row opens it in Paseo.
+
+<table>
+<tr>
+<td align="center" width="33%"><b>Needs input</b><br>an agent is waiting on you</td>
+<td align="center" width="33%"><b>Ready to review</b><br>an agent finished, unreviewed</td>
+<td align="center" width="33%"><b>Working</b><br>nothing needs you, so no count</td>
+</tr>
+<tr>
+<td valign="top"><a href="docs/screenshots/needs-input.png"><img width="100%" src="docs/screenshots/needs-input.png" alt="Tray menu with a workspace in the Needs input section"></a></td>
+<td valign="top"><a href="docs/screenshots/ready-to-review.png"><img width="100%" src="docs/screenshots/ready-to-review.png" alt="Tray menu with a workspace in the Ready to review section"></a></td>
+<td valign="top"><a href="docs/screenshots/working.png"><img width="100%" src="docs/screenshots/working.png" alt="Tray menu with workspaces only in the Working and Done sections"></a></td>
+</tr>
+</table>
+
+Only **Needs input**, **Failed**, and **Ready to review** are counted, so the
+badge disappears once the remaining work is just running or done. Click any
+screenshot for a full-size copy.
+
+Below the workspaces, each host reports whether it is connected, so a daemon
+that has gone away is visible rather than silently missing.
+
 ## Requirements
 
 Paseo Icon needs a running Paseo daemon to talk to. It does not run agents

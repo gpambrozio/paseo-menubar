@@ -196,10 +196,10 @@ async function startDaemon(options?: {
   auth?: { password: string };
   logger?: pino.Logger;
 }): Promise<Harness> {
-  const root = await mkdtemp(path.join(os.tmpdir(), "paseo-icon-daemon-"));
+  const root = await mkdtemp(path.join(os.tmpdir(), "paseo-menubar-daemon-"));
   const paseoHome = path.join(root, ".paseo");
   await mkdir(paseoHome, { recursive: true });
-  const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-icon-static-"));
+  const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-menubar-static-"));
 
   const daemon = await createPaseoDaemon(
     {

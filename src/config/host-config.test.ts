@@ -15,7 +15,7 @@ import {
 const dirs: string[] = [];
 
 async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(path.join(os.tmpdir(), "paseo-icon-"));
+  const dir = await mkdtemp(path.join(os.tmpdir(), "paseo-menubar-"));
   dirs.push(dir);
   return dir;
 }

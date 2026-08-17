@@ -39,7 +39,7 @@ function buildClient(entry: HostEntry): DaemonClient {
   // by clientId, so a fresh random id on every launch would always take the
   // "new session" path instead of resuming. `entry.id` is already a stable,
   // per-host UUID persisted in config.json.
-  const clientId = `paseo-icon-${entry.id}`;
+  const clientId = `paseo-menubar-${entry.id}`;
 
   if (entry.type === "relay") {
     const { offer } = entry;

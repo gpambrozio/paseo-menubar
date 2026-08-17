@@ -190,11 +190,11 @@ describe("deriveTrayViewModel", () => {
 
   it("carries the workspace's own name and project, not a derived label", () => {
     const model = deriveTrayViewModel([
-      host([workspace("w1", { name: "fix-login", projectDisplayName: "paseo-icon" })]),
+      host([workspace("w1", { name: "fix-login", projectDisplayName: "paseo-menubar" })]),
     ]);
     expect(model.sections[0]?.rows[0]).toMatchObject({
       label: "fix-login",
-      projectName: "paseo-icon",
+      projectName: "paseo-menubar",
     });
   });
 

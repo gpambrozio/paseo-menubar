@@ -82,7 +82,7 @@ injection, and is tested without an Electron harness.
 
 ```bash
 SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm install   # Homebrew libvips breaks sharp's prebuild
-npx vitest run                              # 160 tests, 9 files
+npx vitest run                              # 164 tests, 9 files
 npm run typecheck
 ```
 
