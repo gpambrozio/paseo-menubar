@@ -18,10 +18,21 @@ export function createTrayPresenter(options: {
 }): TrayPresenter {
   const { store, assetsDir, handlers, isLoginItemEnabled } = options;
 
+  function loadIcon(name: string): Electron.NativeImage {
+    const file = path.join(assetsDir, `${name}Template.png`);
+    const image = nativeImage.createFromPath(file);
+    // A missing file yields an empty image rather than an error, and an empty
+    // image yields a status item with no visible icon -- no way to open the
+    // menu, no way to quit. The icons are generated, not committed, so this is
+    // reachable from a build that skipped `npm run icons`.
+    if (image.isEmpty()) throw new Error(`Missing tray icon: ${file}`);
+    return image;
+  }
+
   const icons: Record<TrayIconState, Electron.NativeImage> = {
-    idle: nativeImage.createFromPath(path.join(assetsDir, "idleTemplate.png")),
-    working: nativeImage.createFromPath(path.join(assetsDir, "workingTemplate.png")),
-    attention: nativeImage.createFromPath(path.join(assetsDir, "attentionTemplate.png")),
+    idle: loadIcon("idle"),
+    working: loadIcon("working"),
+    attention: loadIcon("attention"),
   };
   for (const image of Object.values(icons)) image.setTemplateImage(true);
 
