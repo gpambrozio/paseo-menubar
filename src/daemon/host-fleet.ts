@@ -55,6 +55,12 @@ export function createHostFleet(options: {
    * need the entry itself.
    */
   const appliedHosts = new Map<string, HostEntry>();
+  /**
+   * The unusable entries behind the caller's error row, keyed by entry id so a
+   * retry can clear or replace its own without disturbing the other hosts'.
+   * Ordered by insertion, which for a rebuild is config order.
+   */
+  const entryFailures = new Map<string, string>();
   let appliedFingerprint = "";
   let pending: Promise<void> = Promise.resolve();
 
@@ -73,20 +79,24 @@ export function createHostFleet(options: {
     for (const connection of connections.values()) await connection.close();
     connections.clear();
     appliedHosts.clear();
+    entryFailures.clear();
 
-    const failures: string[] = [];
     for (const entry of config.hosts) {
       appliedHosts.set(entry.id, entry);
-      const failure = connectHost(entry);
-      if (failure) failures.push(failure);
+      connectHost(entry);
     }
 
     appliedFingerprint = fingerprint;
-    onEntryFailures(failures);
+    reportEntryFailures();
+  }
+
+  function reportEntryFailures(): void {
+    onEntryFailures([...entryFailures.values()]);
   }
 
   /**
-   * Creates one host's connection. Returns a failure description, or null.
+   * Creates one host's connection, recording a failure description under
+   * `entry.id` when it cannot.
    *
    * Nothing here closes a connection already registered under `entry.id`,
    * because there should never be one: `AppConfigSchema` rejects duplicate ids,
@@ -103,20 +113,20 @@ export function createHostFleet(options: {
    * breaks it gets an unusable host and a named configuration error, instead of
    * a live connection that `connections.set` overwrote and nothing can close.
    */
-  function connectHost(entry: HostEntry): string | null {
+  function connectHost(entry: HostEntry): void {
     try {
       if (connections.has(entry.id)) {
         throw new Error(`a connection for host id "${entry.id}" already exists`);
       }
       connections.set(entry.id, createConnection({ entry, store }));
-      return null;
+      entryFailures.delete(entry.id);
     } catch (error) {
       // One unusable entry — a hand-edited endpoint that cannot form a URL,
       // say — must not take down every host after it. Show it as a host that
       // exists and cannot be used, and name it in the error.
       store.setHost(entry.id, entry.label);
       store.setStatus(entry.id, "invalid");
-      return `${entry.label}: ${errorText(error)}`;
+      entryFailures.set(entry.id, `${entry.label}: ${errorText(error)}`);
     }
   }
 
@@ -124,6 +134,10 @@ export function createHostFleet(options: {
    * Rebuilds one host. Auth rejection disposes its client for good, so without
    * this a password fixed on the daemon side has no recovery path short of
    * relaunching — a reload cannot help, since the config bytes never changed.
+   *
+   * A rebuild that fails reports through the same error row a failure during
+   * `applyHosts` does: the tray already shows the host as `invalid`, and
+   * without this the row never says which host or why.
    */
   async function retryHost(hostId: string): Promise<void> {
     const entry = appliedHosts.get(hostId);
@@ -132,6 +146,7 @@ export function createHostFleet(options: {
     connections.delete(hostId);
     if (existing) await existing.close();
     connectHost(entry);
+    reportEntryFailures();
   }
 
   /**

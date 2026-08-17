@@ -68,6 +68,8 @@ function createFakeConnections(options: { closeDelayMs?: number; failOn?: string
     created,
     create,
     events,
+    /** Mutable so a test can break a host that connected fine the first time. */
+    failOn,
     ids: () => created.map((item) => item.entry.id),
     leaked: () => created.filter((item) => !item.closed).map((item) => item.entry.id),
   };
@@ -255,6 +257,47 @@ describe("host fleet retry", () => {
     // first would leave a live connection the store can no longer see: every
     // later status update would early-return on a missing host.
     expect(store.snapshot().map((host) => host.hostId)).toEqual(["h1"]);
+  });
+
+  it("names the host when the rebuild itself fails", async () => {
+    const connections = createFakeConnections();
+    const { fleet, store, failures } = createFleet(connections);
+
+    await fleet.apply(config(directEntry("h1", { label: "laptop" })));
+    expect(failures.at(-1)).toEqual([]);
+
+    connections.failOn.add("h1");
+    await fleet.retry("h1");
+
+    // The tray shows `invalid` either way; without the report the error row
+    // never says which host stopped working or why.
+    expect(store.snapshot()).toMatchObject([{ hostId: "h1", status: "invalid" }]);
+    expect(failures.at(-1)).toEqual(["laptop: cannot build a client for h1"]);
+  });
+
+  it("clears the host's failure once a retry rebuilds it", async () => {
+    const connections = createFakeConnections({ failOn: ["h1"] });
+    const { fleet, failures } = createFleet(connections);
+
+    await fleet.apply(config(directEntry("h1", { label: "laptop" }), directEntry("h2")));
+    expect(failures.at(-1)).toEqual(["laptop: cannot build a client for h1"]);
+
+    connections.failOn.delete("h1");
+    await fleet.retry("h1");
+
+    expect(failures.at(-1)).toEqual([]);
+  });
+
+  it("leaves the other hosts' failures alone when one is retried", async () => {
+    const connections = createFakeConnections({ failOn: ["h1", "h2"] });
+    const { fleet, failures } = createFleet(connections);
+
+    await fleet.apply(config(directEntry("h1"), directEntry("h2")));
+
+    connections.failOn.delete("h1");
+    await fleet.retry("h1");
+
+    expect(failures.at(-1)).toEqual(["h2: cannot build a client for h2"]);
   });
 
   it("ignores a host that is not in the fleet", async () => {
