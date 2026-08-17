@@ -1,0 +1,48 @@
+# Paseo Icon
+
+A menu-bar indicator for [Paseo](https://paseo.sh) agents on macOS. It shows whether
+your agents are idle, working, or waiting for you, and lets you jump straight
+to one from the tray — no window, no dock icon.
+
+Licensed under AGPL-3.0-or-later. See [LICENSE](LICENSE).
+
+## Requirements
+
+Paseo Icon needs a running Paseo daemon to talk to. It does not run agents
+itself — it is a status indicator and launcher for a daemon you already have
+running.
+
+## First run
+
+On first launch, Paseo Icon adopts `127.0.0.1:6767` automatically. If a
+daemon is already running on this machine, there is nothing to configure.
+
+## Adding a remote host
+
+To watch a daemon on another machine:
+
+1. On that machine, run `paseo daemon pair` and copy the link it prints.
+2. On this machine, open the tray menu and choose **Add host from
+   clipboard…**.
+
+## Development
+
+```bash
+npm install
+npm run start      # build and launch
+npm run typecheck
+npm test
+npm run dist        # package a local build (unnotarized)
+```
+
+On macOS with Homebrew's `libvips` installed, `npm install` needs
+`SHARP_IGNORE_GLOBAL_LIBVIPS=1` set, or `sharp` tries to build against the
+Homebrew copy and fails:
+
+```bash
+SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm install
+```
+
+## Platform support
+
+macOS only. Windows and Linux are not built yet.

@@ -1,0 +1,29 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+        env:
+          SHARP_IGNORE_GLOBAL_LIBVIPS: "1"
+      - run: npm run typecheck && npm test
+      - run: npm run dist -- --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Optional codesigning identity. Unset, electron-builder produces an
+          # unsigned build that triggers Gatekeeper on install.
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          # Notarization is off (electron-builder.yml: notarize: false) until
+          # there is a confirmed Apple Developer account. Add APPLE_ID,
+          # APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID secrets here only
+          # after flipping that flag to true.

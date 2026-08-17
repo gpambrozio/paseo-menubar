@@ -1,0 +1,33 @@
+# NEEDS CONFIRMATION: appId and publish.owner below are guesses, not verified
+# identity. appId derives from the author's email domain (gustavo.eng.br);
+# publish.owner assumes the GitHub account is "gustavoambrozio". Confirm both
+# before the first real publish — appId in particular is hard to change later
+# without breaking auto-update and Keychain entries for existing installs.
+appId: br.eng.gustavo.paseo-icon
+productName: Paseo Icon
+executableName: PaseoIcon
+directories:
+  output: release
+files:
+  - dist/**/*
+  - assets/generated/**/*
+  - "!**/*.map"
+publish:
+  provider: github
+  owner: gustavoambrozio
+  repo: paseo-icon
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - dmg
+    - zip
+  hardenedRuntime: true
+  # Flip to true once there is a confirmed Apple Developer account and
+  # signing credentials. Notarizing also requires these env vars at build
+  # time: CSC_LINK, CSC_KEY_PASSWORD, APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD,
+  # APPLE_TEAM_ID. Without them this app cannot notarize, and notarize: true
+  # would fail every local build.
+  notarize: false
+  extendInfo:
+    # No dock icon; this app is the menu bar item.
+    LSUIElement: 1
