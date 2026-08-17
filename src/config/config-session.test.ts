@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createConfigSession } from "./config-session.js";
@@ -253,5 +253,26 @@ describe("config session addHost", () => {
     // The caller runs this from a menu click and turns it into a dialog; a
     // swallowed failure would look like the host was added.
     await expect(session.addHost(hostEntry("h2"))).rejects.toThrow(/not valid JSON/);
+  });
+
+  it("rejects rather than dropping the host when the file cannot be saved", async () => {
+    const dir = await tempDir();
+    await saveConfig(dir, { version: 1, hosts: [hostEntry("h1")] });
+    const { session } = createSession(dir);
+    await session.start();
+
+    // main.ts's error text names this case first: a read-only config
+    // directory. `saveConfig` writes a temp file into `dir` before renaming
+    // it over `config.json`, and that write is what a read-only directory
+    // blocks -- the read half of `addHost` still succeeds.
+    await chmod(dir, 0o500);
+    try {
+      await expect(session.addHost(hostEntry("h2"))).rejects.toThrow(/EACCES|permission denied/);
+    } finally {
+      // Restore write access so `afterEach` can remove the directory.
+      await chmod(dir, 0o700);
+    }
+
+    expect((await loadConfig(dir)).hosts.map((host) => host.id)).toEqual(["h1"]);
   });
 });
