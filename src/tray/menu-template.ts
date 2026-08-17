@@ -90,9 +90,13 @@ export function buildMenuTemplate(
   if (model.sections.length === 0) {
     items.push({ label: "No workspaces", enabled: false });
   } else {
-    for (const section of model.sections) {
+    // A rule between sections, not before the first: AppKit draws a leading
+    // separator as a stray line under the menu's top edge. The heading already
+    // opens each section, so the rule only has to close the one above it.
+    model.sections.forEach((section, index) => {
+      if (index > 0) items.push({ type: "separator" });
       items.push(...sectionItems(section, handlers, options.iconFor));
-    }
+    });
   }
 
   // The seed page has a ceiling. Reaching it means these rows are a subset, and

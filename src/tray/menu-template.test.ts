@@ -112,6 +112,46 @@ describe("buildMenuTemplate", () => {
     expect(row1?.icon).toBeUndefined();
   });
 
+  it("rules between sections, but never above the first one", () => {
+    const model: TrayViewModel = {
+      ...empty,
+      sections: [
+        { bucket: "needs_input", rows: [row()], overflow: 0 },
+        { bucket: "running", rows: [row({ workspaceId: "w2" })], overflow: 0 },
+        { bucket: "done", rows: [row({ workspaceId: "w3" })], overflow: 0 },
+      ],
+    };
+    const template = buildMenuTemplate(model, handlers, menuOptions());
+    // Shape down to the first host-status separator: heading, row, rule,
+    // heading, row, rule, heading, row. A leading rule would show up as a
+    // separator in position 0.
+    const shape = template
+      .slice(0, 8)
+      .map((i) => (i.type === "separator" ? "---" : (i.label ?? "?")));
+    expect(shape).toEqual([
+      "Needs input",
+      "fix-login  ·  paseo",
+      "---",
+      "Working",
+      "fix-login  ·  paseo",
+      "---",
+      "Done",
+      "fix-login  ·  paseo",
+    ]);
+  });
+
+  it("draws no rule when only one section has anything in it", () => {
+    const model: TrayViewModel = {
+      ...empty,
+      sections: [{ bucket: "done", rows: [row()], overflow: 0 }],
+    };
+    const template = buildMenuTemplate(model, handlers, menuOptions());
+    // The trailing separator before the footer is still expected; what must not
+    // appear is one bracketing the single section.
+    expect(template[0]?.type).not.toBe("separator");
+    expect(template[1]?.type).not.toBe("separator");
+  });
+
   it("renders a workspace row with its project and host, and opens it on click", () => {
     const model: TrayViewModel = {
       ...empty,
