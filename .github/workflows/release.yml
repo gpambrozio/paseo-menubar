@@ -7,6 +7,11 @@ on:
 jobs:
   macos:
     runs-on: macos-14
+    # The default GITHUB_TOKEN is read-only on repos created since Feb 2023.
+    # The publish step below needs write access to create the release and
+    # upload assets.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
