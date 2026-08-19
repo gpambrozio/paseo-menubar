@@ -3,41 +3,36 @@ import path from "node:path";
 import { findInTable, UnsupportedCompressionError, type InternalRecord } from "./sstable.js";
 import { findInLog } from "./wal.js";
 
+interface ScanResult {
+  winner: InternalRecord | null;
+  relevantCount: number;
+  parseSkipCount: number;
+  vanishedCount: number;
+  firstParseError: unknown;
+}
+
 /**
- * Reads the newest live value for one key out of a Chromium LevelDB, without
- * taking the database lock.
+ * One pass over the directory: list it, and best-effort read every `.ldb`/
+ * `.log` in that listing.
  *
- * Reading a LevelDB properly means CURRENT -> MANIFEST -> version set -> live
- * files per level. We need exactly one key, and every record carries a
- * sequence number that totally orders it against every other write, so
- * scanning all files and taking the highest sequence is correct by
- * construction and skips the version set entirely.
- *
- * Files are read best-effort. A compaction can delete a file between the
- * directory listing and the read, and a file being written can be torn; both
- * are normal here, so an unreadable file is skipped rather than failing the
- * whole read. A directory that cannot be listed at all is a real error and
- * does throw — that is the difference between "Paseo is busy" and "Paseo is
- * not installed".
- *
- * "No winner" is ambiguous by itself: it means either the key was never
- * written, or every file that could have held it failed to parse. The design
- * doc's failure table gives those two states different behaviour downstream
- * (zero hosts + pairing prompt vs. keep-last-known-good + error detail), so
- * this function must not collapse them into the same `null`. A skipped file
- * is remembered, and if no winner is found and at least one file was
- * skipped, that is reported as a real failure rather than absence.
+ * Two kinds of failure are tracked separately because they mean different
+ * things. A file that disappears between `readdir` and `readFile` almost
+ * always means Chromium's compaction wrote its replacement and then unlinked
+ * this one — the data migrated, it did not vanish, so `vanishedCount` alone
+ * is not evidence anything is wrong. A file that is still there but fails to
+ * parse means the bytes are unintelligible, which is exactly the condition
+ * the design doc's failure table wants surfaced — so only that case sets
+ * `firstParseError`.
  */
-export async function readLevelDbValue(
-  dir: string,
-  userKey: Uint8Array,
-): Promise<Uint8Array | null> {
+async function scan(dir: string, userKey: Uint8Array): Promise<ScanResult> {
   const names = await readdir(dir);
 
   let winner: InternalRecord | null = null;
   let relevantCount = 0;
-  let skippedCount = 0;
-  let firstSkipError: unknown = undefined;
+  let parseSkipCount = 0;
+  let vanishedCount = 0;
+  let firstParseError: unknown;
+
   for (const name of names) {
     const isTable = name.endsWith(".ldb");
     const isLog = name.endsWith(".log");
@@ -47,10 +42,10 @@ export async function readLevelDbValue(
     let bytes: Buffer;
     try {
       bytes = await readFile(path.join(dir, name));
-    } catch (error) {
-      // Compacted away between listing and reading. Nothing to recover.
-      skippedCount += 1;
-      firstSkipError ??= error;
+    } catch {
+      // Compacted away between listing and reading. Nothing to recover, and
+      // not a sign the file's contents were ever bad.
+      vanishedCount += 1;
       continue;
     }
 
@@ -64,8 +59,8 @@ export async function readLevelDbValue(
       if (error instanceof UnsupportedCompressionError) {
         throw error;
       }
-      skippedCount += 1;
-      firstSkipError ??= error;
+      parseSkipCount += 1;
+      firstParseError ??= error;
       continue;
     }
 
@@ -74,12 +69,50 @@ export async function readLevelDbValue(
     }
   }
 
-  if (winner) return winner.isDeletion ? null : winner.value;
+  return { winner, relevantCount, parseSkipCount, vanishedCount, firstParseError };
+}
 
-  if (skippedCount > 0) {
+/**
+ * Reads the newest live value for one key out of a Chromium LevelDB, without
+ * taking the database lock.
+ *
+ * Reading a LevelDB properly means CURRENT -> MANIFEST -> version set -> live
+ * files per level. We need exactly one key, and every record carries a
+ * sequence number that totally orders it against every other write, so
+ * scanning all files and taking the highest sequence is correct by
+ * construction and skips the version set entirely.
+ *
+ * "No winner" is ambiguous by itself: it means either the key was never
+ * written, or a file that could have held it failed to parse. The design
+ * doc's failure table gives those two states different behaviour downstream
+ * (zero hosts + pairing prompt vs. keep-last-known-good + error detail), so
+ * this function must not collapse them into the same `null`. If the scan
+ * ends with no winner and at least one file that failed to *parse*, that is
+ * reported as a real failure rather than absence.
+ *
+ * A file that merely vanished between listing and read is handled
+ * differently: if that is the only thing that went wrong (no winner, no
+ * parse failures, at least one vanished file), the listing was stale, so the
+ * scan is retried exactly once with a fresh `readdir`. A second miss falls
+ * through to whatever that second scan found, `null` included — this is a
+ * bounded retry, not a poll loop.
+ */
+export async function readLevelDbValue(
+  dir: string,
+  userKey: Uint8Array,
+): Promise<Uint8Array | null> {
+  let result = await scan(dir, userKey);
+
+  if (!result.winner && result.parseSkipCount === 0 && result.vanishedCount > 0) {
+    result = await scan(dir, userKey);
+  }
+
+  if (result.winner) return result.winner.isDeletion ? null : result.winner.value;
+
+  if (result.parseSkipCount > 0) {
     throw new Error(
-      `Failed to read ${skippedCount} of ${relevantCount} LevelDB file(s) in ${dir}; the key's value could not be determined`,
-      { cause: firstSkipError },
+      `Failed to read ${result.parseSkipCount} of ${result.relevantCount} LevelDB file(s) in ${dir}; the key's value could not be determined`,
+      { cause: result.firstParseError },
     );
   }
 

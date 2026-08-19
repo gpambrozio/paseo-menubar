@@ -1,9 +1,49 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, readdir, writeFile, cp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { readLevelDbValue } from "./leveldb-reader.js";
 import { crc32c, readVarint64 } from "./binary.js";
+
+/**
+ * A per-path queue of one-shot `readFile` behaviours: the seam a test uses
+ * to make one specific file vanish (or reappear) between the two scans
+ * `readLevelDbValue` can run, without touching that function's public
+ * signature. Each path's queue is consumed front-to-back and then left on
+ * its last entry, so "throw once, then succeed" and "always throw" are both
+ * expressible. Every path with no queue registered passes straight through
+ * to the real filesystem, so the fixture-building helpers below this block
+ * are unaffected.
+ */
+const readFileQueues = vi.hoisted(() => new Map<string, Array<() => Promise<Buffer>>>());
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    // `any` here is test-only mock glue matching `readFile`'s overloaded signature.
+    readFile: vi.fn((filePath: any, ...rest: any[]) => {
+      const queue = readFileQueues.get(String(filePath));
+      if (queue && queue.length > 0) {
+        const behavior = queue.length > 1 ? queue.shift()! : queue[0]!;
+        return behavior();
+      }
+      return actual.readFile(filePath, ...rest);
+    }),
+  };
+});
+
+afterEach(() => {
+  readFileQueues.clear();
+});
+
+function enoentError(filePath: string): NodeJS.ErrnoException {
+  const error = new Error(
+    `ENOENT: no such file or directory, open '${filePath}'`,
+  ) as NodeJS.ErrnoException;
+  error.code = "ENOENT";
+  return error;
+}
 
 const FIXTURES = new URL("./__fixtures__/", import.meta.url).pathname;
 
@@ -52,6 +92,23 @@ async function copyWithCorruptedTable(fixture: string): Promise<string> {
   await cp(src, dst, { recursive: true });
   const name = await findLdbName(dst);
   await corruptFile(path.join(dst, name));
+  return dst;
+}
+
+/** A fresh directory holding only an unmodified copy of `fixture`'s `.ldb`. */
+async function onlyGoodTable(fixture: string): Promise<string> {
+  const src = path.join(FIXTURES, fixture);
+  const dst = await mkdtemp(path.join(os.tmpdir(), "leveldb-reader-vanish-"));
+  const name = await findLdbName(src);
+  await cp(path.join(src, name), path.join(dst, name));
+  return dst;
+}
+
+/** An unmodified copy of the whole `fixture` directory. */
+async function copyDir(fixture: string): Promise<string> {
+  const src = path.join(FIXTURES, fixture);
+  const dst = await mkdtemp(path.join(os.tmpdir(), "leveldb-reader-copy-"));
+  await cp(src, dst, { recursive: true });
   return dst;
 }
 
@@ -155,5 +212,49 @@ describe("readLevelDbValue", () => {
     await expect(readLevelDbValue(dir, KEY)).rejects.toThrow(
       /Unsupported LevelDB compression type 99/,
     );
+  });
+
+  it("returns null, not a throw, when the only relevant file vanishes on every attempt", async () => {
+    const dir = await onlyGoodTable("compacted");
+    const target = path.join(dir, await findLdbName(dir));
+    // Persists: a queue of length 1 is reused on every call, so both the
+    // first scan and the retry see the file as gone.
+    readFileQueues.set(target, [async () => { throw enoentError(target); }]);
+
+    // A vanished file is not evidence of a bad file, so this must resolve
+    // to "key absent", not reject the way a parse failure does.
+    await expect(readLevelDbValue(dir, KEY)).resolves.toBeNull();
+  });
+
+  it("still returns the good record when a sibling file has merely vanished", async () => {
+    const dir = await copyDir("superseded");
+    // Make the .ldb (holding the stale value) vanish on every read; the
+    // .log's fresh value must still win, and win without a retry, since a
+    // winner short-circuits before the vanish/retry check runs.
+    const ldbTarget = path.join(dir, await findLdbName(dir));
+    readFileQueues.set(ldbTarget, [async () => { throw enoentError(ldbTarget); }]);
+
+    const value = text(await readLevelDbValue(dir, KEY));
+    expect(value).toContain("fresh");
+  });
+
+  it("finds the record on the retried scan after the first scan saw the file vanish", async () => {
+    const dir = await onlyGoodTable("compacted");
+    const target = path.join(dir, await findLdbName(dir));
+    const goodBytes = await readFile(target); // passes through: no queue set yet
+
+    // First call: looks vanished. Second call (the retry): succeeds. If the
+    // retry were missing or broken, this test — not the "still returns...
+    // vanished" test above, which never needs a retry — is the one that
+    // would catch it.
+    readFileQueues.set(target, [
+      async () => {
+        throw enoentError(target);
+      },
+      async () => goodBytes,
+    ]);
+
+    const value = text(await readLevelDbValue(dir, KEY));
+    expect(value).toContain("compacted");
   });
 });
