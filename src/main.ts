@@ -4,6 +4,7 @@ import { watch } from "node:fs";
 import { HostStore } from "./daemon/host-store.js";
 import { createHostFleet } from "./daemon/host-fleet.js";
 import { createRegistrySession } from "./registry/registry-session.js";
+import { createRegistryWatcher } from "./registry/registry-watcher.js";
 import { readRegistry, registryLevelDbDir } from "./registry/paseo-registry.js";
 import { defaultDesktopAppInstalled, openApp, openWorkspace } from "./launch/open-paseo.js";
 import { createTrayPresenter, type TrayPresenter } from "./tray/tray-presenter.js";
@@ -54,30 +55,36 @@ if (!app.requestSingleInstanceLock()) {
        * session debounces and decides whether anything actually changed.
        *
        * The directory can be absent (Paseo not installed) or vanish (the app
-       * is uninstalled while we run). Neither may throw: an FSWatcher 'error'
-       * event with no listener takes the process down.
+       * is uninstalled while we run), and the watch itself can die. All the
+       * deciding lives in `createRegistryWatcher`; this supplies `fs.watch`
+       * and the one rule that cannot be expressed there — an FSWatcher
+       * 'error' event with no listener takes the process down.
        */
-      function watchRegistry(onChange: () => void): () => void {
-        let watcher: ReturnType<typeof watch> | null = null;
-        let cancelled = false;
-        void registryLevelDbDir(appSupportDir)
-          .then((dir) => {
-            if (cancelled) return;
-            watcher = watch(dir, () => onChange());
-            watcher.on("error", () => {});
-          })
-          .catch(() => {
-            // Not installed. The poll is what notices if that changes.
+      const registryWatcher = createRegistryWatcher({
+        resolveDir: () => registryLevelDbDir(appSupportDir),
+        open: (dir, { onChange, onError }) => {
+          const watcher = watch(dir, () => onChange());
+          watcher.on("error", () => {
+            watcher.close();
+            onError();
           });
-        return () => {
-          cancelled = true;
-          watcher?.close();
-        };
-      }
+          return () => watcher.close();
+        },
+      });
 
       const session = createRegistrySession({
-        readRegistry: () => readRegistry(appSupportDir),
-        watch: watchRegistry,
+        readRegistry: async () => {
+          try {
+            return await readRegistry(appSupportDir);
+          } finally {
+            // A read that got as far as running means the directory may exist
+            // now even if it did not at launch. Attaching from here is what
+            // makes installing Paseo mid-session take effect on the next poll
+            // rather than never.
+            registryWatcher.ensureAttached();
+          }
+        },
+        watch: (onChange) => registryWatcher.watch(onChange),
         applyConfig: (config) => fleet.apply(config),
         onConfigError: (message) => store.setConfigError(message),
       });
