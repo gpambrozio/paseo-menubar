@@ -1,0 +1,109 @@
+name: homebrew-cask
+
+# Publishes packaging/homebrew/paseo-menubar.rb to the gpambrozio/homebrew-tap
+# repo, so `brew install --cask gpambrozio/tap/paseo-menubar` gets the release
+# that was just uploaded.
+#
+# workflow_dispatch is the primary path, not a fallback. Release artifacts here
+# are built and uploaded by hand (see the known issues in CLAUDE.md), so
+# `release: published` can fire while the dmg is still uploading -- or before it
+# exists at all, if the release was created first and filled in after. Running
+# this by hand once the assets are actually up is the reliable order. The
+# release trigger is kept for the case where `gh release create` uploads the
+# files and publishes in one shot.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag whose dmg the cask should point at (e.g. v0.1.0)"
+        required: true
+  release:
+    types: [published]
+
+jobs:
+  update-tap:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      # GITHUB_TOKEN is scoped to this repository and cannot push to the tap, so
+      # this needs a PAT with contents:write on gpambrozio/homebrew-tap. Until
+      # that secret exists the job reports what it would have done instead of
+      # failing: a red run on a tag reads as "the release is broken" when the
+      # real state is "the tap is updated by hand". This mirrors the same guard
+      # in release.yml, and is in `env` because the `secrets` context is not
+      # available to an `if:` condition.
+      HAVE_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
+      TAG: ${{ inputs.tag || github.event.release.tag_name }}
+      TAP_REPOSITORY: gpambrozio/homebrew-tap
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # No `npm ci`: render-cask.mjs has no dependencies, and installing
+      # Electron to rewrite two lines of Ruby would dominate the run.
+      - name: Resolve the release version
+        run: |
+          set -euo pipefail
+          if [ -z "${TAG:-}" ]; then
+            echo "::error title=No tag::Nothing to publish. Run this workflow manually with the release tag."
+            exit 1
+          fi
+          echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+
+      # Downloading the asset rather than reading the API's digest field is
+      # deliberate: it checksums the exact bytes a `brew install` will fetch,
+      # from the exact url the cask names. The asset name is the one thing here
+      # that nothing else validates -- the files on disk have a space in them
+      # and the uploaded assets have hyphens, matched by hand -- so a rename
+      # fails this step with a 404 instead of publishing a cask nobody can
+      # install.
+      - name: Checksum the published dmg
+        run: |
+          set -euo pipefail
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/Paseo-Icon-${VERSION}-arm64.dmg"
+          echo "Fetching ${URL}"
+          if ! curl -fsSL --retry 3 --retry-delay 5 -o paseo.dmg "$URL"; then
+            echo "::error title=Asset not found::${URL} did not download. Check that the dmg is uploaded to ${TAG} and named with hyphens, not spaces."
+            exit 1
+          fi
+          echo "SHA256=$(shasum -a 256 paseo.dmg | cut -d' ' -f1)" >> "$GITHUB_ENV"
+
+      - name: Check out the tap
+        if: env.HAVE_TAP_TOKEN == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.TAP_REPOSITORY }}
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Render and push the cask
+        if: env.HAVE_TAP_TOKEN == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p tap/Casks
+          node scripts/render-cask.mjs \
+            --version "$VERSION" \
+            --sha256 "$SHA256" \
+            --out tap/Casks/paseo-menubar.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/paseo-menubar.rb
+          if git diff --cached --quiet; then
+            echo "::notice title=Tap already current::The cask already points at ${VERSION} with this checksum."
+            exit 0
+          fi
+          git commit -m "paseo-menubar ${VERSION}"
+          git push
+          echo "::notice title=Tap updated::${TAP_REPOSITORY} now serves paseo-menubar ${VERSION}."
+
+      - name: Report the cask that was not pushed
+        if: env.HAVE_TAP_TOKEN != 'true'
+        run: |
+          set -euo pipefail
+          echo "::notice title=Tap push skipped::No HOMEBREW_TAP_TOKEN secret, so ${TAP_REPOSITORY} was not updated. The cask this run would have published is below; commit it to the tap by hand."
+          node scripts/render-cask.mjs --version "$VERSION" --sha256 "$SHA256"

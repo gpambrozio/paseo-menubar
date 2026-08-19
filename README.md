@@ -33,6 +33,21 @@ screenshot for a full-size copy.
 Below the workspaces, each host reports whether it is connected, so a daemon
 that has gone away is visible rather than silently missing.
 
+## Install
+
+```bash
+brew install --cask gpambrozio/tap/paseo-menubar
+```
+
+Or download the dmg from [the latest release](https://github.com/gpambrozio/paseo-menubar/releases/latest).
+
+Builds are Apple Silicon only and need macOS 12 or later. The app and the disk image
+are both signed and notarized, so Gatekeeper opens it without a right-click detour.
+
+To remove it, `brew uninstall --cask paseo-menubar` — or `--zap` instead of
+`--cask` to take the configuration with it, since `config.json` holds the TCP
+passwords and relay keys for every host you added.
+
 ## Requirements
 
 Paseo Icon needs a running Paseo daemon to talk to. It does not run agents

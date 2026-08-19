@@ -82,7 +82,7 @@ injection, and is tested without an Electron harness.
 
 ```bash
 SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm install   # Homebrew libvips breaks sharp's prebuild
-npx vitest run                              # 164 tests, 9 files
+npx vitest run                              # 181 tests, 10 files
 npm run typecheck
 ```
 
@@ -93,6 +93,37 @@ npm run typecheck
 - **Integration tests boot a real daemon** in-process from `@getpaseo/server`. They are
   slow by design. Always `listen: "127.0.0.1:0"` so the OS picks the port — a fixed port
   collides with the developer's own daemon on 6767.
+
+## Distribution
+
+`brew install --cask gpambrozio/tap/paseo-menubar` is the install path. The cask's
+source of truth is `packaging/homebrew/paseo-menubar.rb` **here**, not the copy in
+the tap — `.github/workflows/homebrew-cask.yml` renders this file and pushes the
+result to `gpambrozio/homebrew-tap`, so an edit made in the tap is overwritten by
+the next release.
+
+- **The cask token is `paseo-menubar`, the display name is `Paseo Icon`, and the
+  bundle is `PaseoIcon.app`.** All three are correct and all three are different.
+  The rename moved the package, appId, and repo to `paseo-menubar` while leaving
+  `productName` alone, and `executableName: PaseoIcon` is what names the bundle
+  directory. `scripts/render-cask.test.mjs` asserts the cask's `app` stanza still
+  matches `electron-builder.yml`, because renaming that field breaks every
+  `brew install` with an "unable to locate app" long after the release ships.
+- **Run the workflow by hand after uploading the artifacts.** Uploads are manual,
+  so `release: published` can fire while the dmg is still going up. The workflow
+  downloads the exact url the cask names and checksums the bytes rather than
+  trusting the API's digest field — that is also what catches the hyphen-vs-space
+  asset naming, which nothing else validates.
+- **`scripts/` is build tooling and is not compiled into `dist/`**, so it is plain
+  `.mjs`. It is still tested: `vitest.config.ts` includes `scripts/**/*.test.mjs`.
+  `render-cask.mjs` throws rather than no-op when a substitution finds no match —
+  a silent no-op there publishes a cask that pins the old checksum against the new
+  version, which fails every user's install while the workflow stays green.
+- **Verify a cask change by tapping it, not by reading it.** `brew style` on a
+  loose file reports Sorbet and `frozen_string_literal` offenses that do not apply
+  to casks in a tap; `brew audit --cask --online` and `brew livecheck` are the real
+  checks, and the deprecated `depends_on macos: ">= :monterey"` spelling was caught
+  this way and not by review.
 
 ## Two things this project learned the hard way
 
@@ -113,6 +144,12 @@ narrating a check you did not perform.
   sorts last and goes first. Closing this needs a daemon-side sort key. The cap stays
   visible in the menu, so nothing is lost silently.
 - The `addHost` save-failure test assumes a non-root runner.
+- The `homebrew-cask` workflow cannot push without a `HOMEBREW_TAP_TOKEN` secret —
+  `GITHUB_TOKEN` is scoped to this repo and has no write access to
+  `gpambrozio/homebrew-tap`. It needs a PAT with `contents: write` on the tap.
+  Until then the job still resolves the version, downloads the dmg, and checksums
+  it, then prints the cask it would have published as a notice for a manual commit,
+  rather than failing red the way a broken release would.
 - The `release` workflow neither signs nor publishes. `appId`, `publish.owner`, and
   `notarize: true` are settled, and a local `npm run dist` signs and notarizes both the
   `.app` and the dmg from the maintainer's keychain — but the repo has no Actions secrets,
