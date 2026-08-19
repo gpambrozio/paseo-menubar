@@ -119,6 +119,19 @@ the next release.
   `render-cask.mjs` throws rather than no-op when a substitution finds no match —
   a silent no-op there publishes a cask that pins the old checksum against the new
   version, which fails every user's install while the workflow stays green.
+- **`HOMEBREW_TAP_TOKEN` is a fine-grained PAT and it expires.** `GITHUB_TOKEN` is
+  scoped to this repo and cannot write to the tap, so the workflow uses a PAT with
+  `contents: write` on `gpambrozio/homebrew-tap` only. When it lapses the run fails
+  at "Check out the tap" with a permissions error that says nothing about expiry —
+  regenerate it at github.com/settings/personal-access-tokens and re-run
+  `gh secret set HOMEBREW_TAP_TOKEN --repo gpambrozio/paseo-menubar`. The workflow
+  still degrades to printing the cask when the secret is absent entirely, but an
+  *expired* secret is present, so that guard does not catch this.
+- **Re-running against the current release is a safe test.** Rendering is
+  idempotent, so a dispatch for a tag the tap already serves reaches "Tap already
+  current" and pushes nothing. That exercises auth, download, and checksum without
+  touching the tap — but not `git push`, which is only covered by a run that
+  actually changes something.
 - **Verify a cask change by tapping it, not by reading it.** `brew style` on a
   loose file reports Sorbet and `frozen_string_literal` offenses that do not apply
   to casks in a tap; `brew audit --cask --online` and `brew livecheck` are the real
@@ -144,12 +157,6 @@ narrating a check you did not perform.
   sorts last and goes first. Closing this needs a daemon-side sort key. The cap stays
   visible in the menu, so nothing is lost silently.
 - The `addHost` save-failure test assumes a non-root runner.
-- The `homebrew-cask` workflow cannot push without a `HOMEBREW_TAP_TOKEN` secret —
-  `GITHUB_TOKEN` is scoped to this repo and has no write access to
-  `gpambrozio/homebrew-tap`. It needs a PAT with `contents: write` on the tap.
-  Until then the job still resolves the version, downloads the dmg, and checksums
-  it, then prints the cask it would have published as a notice for a manual commit,
-  rather than failing red the way a broken release would.
 - The `release` workflow neither signs nor publishes. `appId`, `publish.owner`, and
   `notarize: true` are settled, and a local `npm run dist` signs and notarizes both the
   `.app` and the dmg from the maintainer's keychain — but the repo has no Actions secrets,
