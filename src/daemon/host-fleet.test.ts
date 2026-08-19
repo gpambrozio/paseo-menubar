@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hostEntryEndpointHint, type AppConfig, type HostEntry } from "../config/host-config.js";
+import { hostEntryEndpointHint, type AppConfig, type HostEntry } from "../config/host-entry.js";
 import { HostStore } from "./host-store.js";
 import { createHostFleet } from "./host-fleet.js";
 

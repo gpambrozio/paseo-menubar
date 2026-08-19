@@ -1,0 +1,182 @@
+import { AppConfigSchema, hostsFingerprint, type AppConfig, type HostEntry } from "../config/host-entry.js";
+import { errorText } from "../error-text.js";
+import type { RegistrySnapshot } from "./paseo-registry.js";
+
+export interface RegistrySession {
+  /** Reads once and applies. Never rejects. */
+  start(): Promise<void>;
+  /** Re-reads. Never rejects. Exposed for the watcher, the poll, and tests. */
+  refresh(): Promise<void>;
+  /** The fleet's unusable entries, for the half of the error row it owns. */
+  noteEntryFailures(failures: string[]): void;
+  stop(): void;
+}
+
+const NO_HOSTS_MESSAGE = "No hosts yet. Pair a host in the Paseo app.";
+
+/**
+ * Owns the tray's view of the Paseo app's host registry: when to re-read it,
+ * whether anything changed, and what the error row says.
+ *
+ * Electron-free on purpose, the same way `host-fleet.ts` is. Everything here
+ * is reachable on a machine where the Paseo app is missing, mid-write, or has
+ * moved its storage, so it has to be testable without a main process.
+ *
+ * Nothing here may reject. A menu-bar app that dies on a torn read of another
+ * program's database leaves the user nothing to fix it with.
+ */
+export function createRegistrySession(options: {
+  /** Injected so tests need no filesystem. Production passes `readRegistry`. */
+  readRegistry: () => Promise<RegistrySnapshot | null>;
+  /** Starts watching; returns the stop function. Production watches the dir. */
+  watch: (onChange: () => void) => () => void;
+  applyConfig: (config: AppConfig) => Promise<void>;
+  onConfigError: (message: string | null) => void;
+  /** Safety net for events the watcher misses. Zero disables it. */
+  pollMs?: number;
+  debounceMs?: number;
+}): RegistrySession {
+  const { readRegistry, watch, applyConfig, onConfigError } = options;
+  const pollMs = options.pollMs ?? 60_000;
+  const debounceMs = options.debounceMs ?? 500;
+
+  let appliedFingerprint: string | null = null;
+  let stopWatching: (() => void) | null = null;
+  let debounceTimer: NodeJS.Timeout | null = null;
+  let pollTimer: NodeJS.Timeout | null = null;
+  let running: Promise<void> | null = null;
+
+  // Two independent problems, reported through one menu row: reading the
+  // registry, and entries the fleet could not use. Either can be fixed without
+  // the other, so neither may clear the other.
+  let registryError: string | null = null;
+  let fleetError: string | null = null;
+
+  function refreshConfigError(): void {
+    const problems = [registryError, fleetError].filter((problem) => problem !== null);
+    onConfigError(problems.length > 0 ? problems.join("\n\n") : null);
+  }
+
+  async function readAndApply(): Promise<void> {
+    let snapshot: RegistrySnapshot | null;
+    try {
+      snapshot = await readRegistry();
+    } catch (error) {
+      // Keep the last known-good host set live and say what went wrong. A
+      // compaction mid-read lands here and resolves itself on the next tick.
+      registryError = errorText(error);
+      refreshConfigError();
+      return;
+    }
+
+    const hosts: HostEntry[] = snapshot?.hosts ?? [];
+    const failures = snapshot?.failures ?? [];
+
+    const problems: string[] = [];
+    // Absent key and empty array are the same dead end for the user: no
+    // hosts, and no `config.json` or pairing flow left to add one with. Only
+    // a registry that produced *something* -- hosts, or hosts it had to drop
+    // and named -- has no need of this.
+    if (hosts.length === 0 && failures.length === 0) problems.push(NO_HOSTS_MESSAGE);
+    // Part of the database was unreadable but a value came back anyway. The
+    // hosts below are applied — they are the best answer available — and this
+    // says they may be a superseded copy, which is the difference between a
+    // deleted host lingering visibly and lingering silently.
+    if (snapshot?.warning) problems.push(snapshot.warning);
+    if (failures.length > 0) {
+      problems.push(`These hosts could not be used:\n\n${failures.join("\n")}`);
+    }
+
+    // The host set is hand-built from another program's storage, so it is
+    // parsed before the fleet sees it. `host-fleet.ts` justifies its
+    // duplicate-id invariant with "AppConfigSchema rejects duplicate ids",
+    // and that guarantee only holds while something actually parses -- this
+    // is the only path that builds a config now. It also puts the published
+    // offer schema's own constraints (a relay endpoint and daemon key that
+    // are not the empty string) back in front of the connection code.
+    const parsed = AppConfigSchema.safeParse({ version: 1, hosts });
+    if (!parsed.success) {
+      // Route to the error row, never into the main process: the last
+      // known-good host set stays live, exactly as a read failure does.
+      problems.push(
+        `The Paseo app's host list could not be used:\n\n${parsed.error.issues
+          .map((issue) => issue.message)
+          .join("\n")}`,
+      );
+      registryError = problems.join("\n\n");
+      refreshConfigError();
+      return;
+    }
+
+    registryError = problems.length > 0 ? problems.join("\n\n") : null;
+    refreshConfigError();
+
+    // Rebuilding tears down live connections, so it happens only when the
+    // host set genuinely differs -- Chromium rewrites this database constantly
+    // for keys we do not care about.
+    const fingerprint = hostsFingerprint(parsed.data.hosts);
+    if (fingerprint === appliedFingerprint) return;
+    // Recorded only once the fleet has actually taken it. Claiming it up
+    // front is the mistake `host-fleet.ts` documents avoiding: a rebuild that
+    // dies partway would still look applied, and since the *next* read
+    // succeeds and clears the error row, the user would be left with no
+    // hosts, no error, and no way back.
+    await applyConfig(parsed.data);
+    appliedFingerprint = fingerprint;
+  }
+
+  /** Serializes reads so a watcher burst cannot interleave two applies. */
+  function serialize(): Promise<void> {
+    const next = (running ?? Promise.resolve()).then(readAndApply, readAndApply);
+    running = next.catch(() => undefined);
+    return next;
+  }
+
+  async function safeRefresh(): Promise<void> {
+    try {
+      await serialize();
+    } catch (error) {
+      // serialize() already routes read failures to the error row; this is the
+      // last line against applyConfig throwing.
+      registryError = errorText(error);
+      refreshConfigError();
+    }
+  }
+
+  return {
+    async start() {
+      stopWatching = watch(() => {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          debounceTimer = null;
+          void safeRefresh();
+        }, debounceMs);
+      });
+      if (pollMs > 0) {
+        pollTimer = setInterval(() => void safeRefresh(), pollMs);
+        // A background poll must never hold the process open on its own.
+        pollTimer.unref?.();
+      }
+      await safeRefresh();
+    },
+
+    refresh() {
+      return safeRefresh();
+    },
+
+    noteEntryFailures(failures) {
+      fleetError =
+        failures.length > 0 ? `These hosts could not be used:\n\n${failures.join("\n")}` : null;
+      refreshConfigError();
+    },
+
+    stop() {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      if (pollTimer) clearInterval(pollTimer);
+      debounceTimer = null;
+      pollTimer = null;
+      stopWatching?.();
+      stopWatching = null;
+    },
+  };
+}

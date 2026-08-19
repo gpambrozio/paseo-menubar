@@ -113,7 +113,7 @@ export interface TrayViewModel {
    * there, but a click may not find its agent and falls back to the browser.
    */
   agentIndexTruncatedHosts: string[];
-  /** Set when config.json cannot be used; the last known-good fleet keeps running. */
+  /** Set when the registry cannot be used; the last known-good fleet keeps running. */
   configError: string | null;
 }
 
