@@ -103,6 +103,7 @@ export function hostEntriesFromRegistry(json: string): RegistrySnapshot {
 
   const hosts: HostEntry[] = [];
   const failures: string[] = [];
+  const seenServerIds = new Set<string>();
 
   for (const profile of profiles) {
     const connection = chooseConnection(profile);
@@ -111,6 +112,19 @@ export function hostEntriesFromRegistry(json: string): RegistrySnapshot {
       failures.push(`${name} — no connection the menu bar can use`);
       continue;
     }
+
+    // Two profiles for one daemon is a shape the Paseo app can hold, and the
+    // id keys the fleet's connection map: the second entry would overwrite
+    // the first, leaving one live socket wearing the other's label, type, and
+    // web base url. The first profile wins and the second is named, because
+    // dropping it quietly is the silent cap this project forbids.
+    if (seenServerIds.has(profile.serverId)) {
+      failures.push(
+        `${name} — a second profile for host ${profile.serverId}; the menu bar shows the first`,
+      );
+      continue;
+    }
+    seenServerIds.add(profile.serverId);
 
     // The id is the serverId, never the connection id: distinct hosts share
     // the identical connection id `relay:wss:relay.paseo.sh:443`, which the

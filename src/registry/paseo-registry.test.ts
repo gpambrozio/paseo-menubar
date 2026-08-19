@@ -113,6 +113,37 @@ describe("hostEntriesFromRegistry", () => {
     expect(hosts.map((host) => host.id)).toEqual(["srv_a", "srv_b"]);
   });
 
+  it("keeps only the first profile for a repeated serverId and names the loser", () => {
+    const { hosts, failures } = hostEntriesFromRegistry(
+      JSON.stringify([
+        profile({ label: "Direct one" }),
+        profile({
+          label: "Relay twin",
+          connections: [
+            {
+              id: "relay:wss:relay.paseo.sh:443",
+              type: "relay",
+              relayEndpoint: "relay.paseo.sh:443",
+              useTls: true,
+              daemonPublicKeyB64: "AAAA",
+            },
+          ],
+          preferredConnectionId: "relay:wss:relay.paseo.sh:443",
+        }),
+      ]),
+    );
+
+    // Both profiles carry serverId `srv_one`. The id keys the fleet's
+    // connection map, so admitting both leaves one live socket labelled and
+    // typed as the other -- the relay row would answer for the direct
+    // connection, and `webBaseUrlFor` would return undefined for it.
+    expect(hosts).toHaveLength(1);
+    expect(hosts[0]).toMatchObject({ id: "srv_one", label: "Direct one", type: "directTcp" });
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toContain("Relay twin");
+    expect(failures[0]).toContain("srv_one");
+  });
+
   it("falls back to a supported connection when the preferred one is not", () => {
     const { hosts } = hostEntriesFromRegistry(
       JSON.stringify([

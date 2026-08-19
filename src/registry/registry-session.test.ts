@@ -92,6 +92,48 @@ describe("createRegistrySession", () => {
     expect(errors.at(-1)).toContain("out of date");
   });
 
+  it("refuses a host set the config schema rejects, and keeps the last good one", async () => {
+    const duplicate = host("a");
+    const { session, applied, errors } = harness([
+      { hosts: [host("a")], failures: [] },
+      { hosts: [host("a"), duplicate], failures: [] },
+    ]);
+    await session.start();
+    await session.refresh();
+
+    // Nothing but the first, valid set ever reaches the fleet: two entries
+    // under one id would leave an orphaned connection whose socket and
+    // subscription never stop.
+    expect(applied).toHaveLength(1);
+    expect(errors.at(-1)).toContain("Duplicate host id");
+  });
+
+  it("refuses a relay entry whose offer fields are empty", async () => {
+    const { session, applied, errors } = harness([
+      {
+        hosts: [
+          {
+            id: "r1",
+            type: "relay",
+            offer: {
+              v: 2,
+              serverId: "srv",
+              daemonPublicKeyB64: "",
+              relay: { endpoint: "", useTls: true },
+            },
+          },
+        ],
+        failures: [],
+      },
+    ]);
+    await session.start();
+
+    // `ConnectionOfferSchema`'s `.min(1)` is the only thing standing between
+    // an empty credential from the registry and the connection code.
+    expect(applied).toEqual([]);
+    expect(errors.at(-1)).toContain("could not be used");
+  });
+
   it("surfaces dropped hosts in the error row", async () => {
     const { session, errors } = harness([
       { hosts: [host("a")], failures: ["Pipe only — no connection the menu bar can use"] },

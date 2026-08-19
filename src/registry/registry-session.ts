@@ -1,4 +1,4 @@
-import { hostsFingerprint, type AppConfig, type HostEntry } from "../config/host-entry.js";
+import { AppConfigSchema, hostsFingerprint, type AppConfig, type HostEntry } from "../config/host-entry.js";
 import { errorText } from "../error-text.js";
 import type { RegistrySnapshot } from "./paseo-registry.js";
 
@@ -82,16 +82,38 @@ export function createRegistrySession(options: {
     if (failures.length > 0) {
       problems.push(`These hosts could not be used:\n\n${failures.join("\n")}`);
     }
+
+    // The host set is hand-built from another program's storage, so it is
+    // parsed before the fleet sees it. `host-fleet.ts` justifies its
+    // duplicate-id invariant with "AppConfigSchema rejects duplicate ids",
+    // and that guarantee only holds while something actually parses -- this
+    // is the only path that builds a config now. It also puts the published
+    // offer schema's own constraints (a relay endpoint and daemon key that
+    // are not the empty string) back in front of the connection code.
+    const parsed = AppConfigSchema.safeParse({ version: 1, hosts });
+    if (!parsed.success) {
+      // Route to the error row, never into the main process: the last
+      // known-good host set stays live, exactly as a read failure does.
+      problems.push(
+        `The Paseo app's host list could not be used:\n\n${parsed.error.issues
+          .map((issue) => issue.message)
+          .join("\n")}`,
+      );
+      registryError = problems.join("\n\n");
+      refreshConfigError();
+      return;
+    }
+
     registryError = problems.length > 0 ? problems.join("\n\n") : null;
     refreshConfigError();
 
     // Rebuilding tears down live connections, so it happens only when the
     // host set genuinely differs -- Chromium rewrites this database constantly
     // for keys we do not care about.
-    const fingerprint = hostsFingerprint(hosts);
+    const fingerprint = hostsFingerprint(parsed.data.hosts);
     if (fingerprint === appliedFingerprint) return;
     appliedFingerprint = fingerprint;
-    await applyConfig({ version: 1, hosts });
+    await applyConfig(parsed.data);
   }
 
   /** Serializes reads so a watcher burst cannot interleave two applies. */
