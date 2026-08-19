@@ -1,6 +1,6 @@
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
-import { findInTable, type InternalRecord } from "./sstable.js";
+import { findInTable, UnsupportedCompressionError, type InternalRecord } from "./sstable.js";
 import { findInLog } from "./wal.js";
 
 /**
@@ -19,6 +19,14 @@ import { findInLog } from "./wal.js";
  * whole read. A directory that cannot be listed at all is a real error and
  * does throw — that is the difference between "Paseo is busy" and "Paseo is
  * not installed".
+ *
+ * "No winner" is ambiguous by itself: it means either the key was never
+ * written, or every file that could have held it failed to parse. The design
+ * doc's failure table gives those two states different behaviour downstream
+ * (zero hosts + pairing prompt vs. keep-last-known-good + error detail), so
+ * this function must not collapse them into the same `null`. A skipped file
+ * is remembered, and if no winner is found and at least one file was
+ * skipped, that is reported as a real failure rather than absence.
  */
 export async function readLevelDbValue(
   dir: string,
@@ -27,16 +35,22 @@ export async function readLevelDbValue(
   const names = await readdir(dir);
 
   let winner: InternalRecord | null = null;
+  let relevantCount = 0;
+  let skippedCount = 0;
+  let firstSkipError: unknown = undefined;
   for (const name of names) {
     const isTable = name.endsWith(".ldb");
     const isLog = name.endsWith(".log");
     if (!isTable && !isLog) continue;
+    relevantCount += 1;
 
     let bytes: Buffer;
     try {
       bytes = await readFile(path.join(dir, name));
-    } catch {
+    } catch (error) {
       // Compacted away between listing and reading. Nothing to recover.
+      skippedCount += 1;
+      firstSkipError ??= error;
       continue;
     }
 
@@ -47,9 +61,11 @@ export async function readLevelDbValue(
       // A corrupt or half-written file must not hide a good record in a
       // sibling file, but an unsupported compression type means the format
       // moved under us and every file is suspect -- that one propagates.
-      if (error instanceof Error && error.message.includes("Unsupported LevelDB compression")) {
+      if (error instanceof UnsupportedCompressionError) {
         throw error;
       }
+      skippedCount += 1;
+      firstSkipError ??= error;
       continue;
     }
 
@@ -58,6 +74,14 @@ export async function readLevelDbValue(
     }
   }
 
-  if (!winner || winner.isDeletion) return null;
-  return winner.value;
+  if (winner) return winner.isDeletion ? null : winner.value;
+
+  if (skippedCount > 0) {
+    throw new Error(
+      `Failed to read ${skippedCount} of ${relevantCount} LevelDB file(s) in ${dir}; the key's value could not be determined`,
+      { cause: firstSkipError },
+    );
+  }
+
+  return null;
 }

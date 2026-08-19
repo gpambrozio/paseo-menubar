@@ -16,6 +16,23 @@ export interface InternalRecord {
   value: Uint8Array;
 }
 
+/**
+ * Thrown when a block's compression byte is neither `0` (none) nor `1`
+ * (snappy). Distinguished from the generic parse errors this module also
+ * throws so callers can tell "the storage format moved under us" apart from
+ * "this file is torn" — the two need different recovery, per the design
+ * doc's failure table.
+ */
+export class UnsupportedCompressionError extends Error {
+  readonly compression: number;
+
+  constructor(compression: number) {
+    super(`Unsupported LevelDB compression type ${compression}. The Paseo app's storage format changed.`);
+    this.name = "UnsupportedCompressionError";
+    this.compression = compression;
+  }
+}
+
 const FOOTER_LENGTH = 48;
 const MAGIC_LOW = 0x8b80fb57;
 const MAGIC_HIGH = 0xdb477524;
@@ -69,9 +86,7 @@ function readBlock(file: Uint8Array, handle: BlockHandle): Uint8Array {
 
   if (compression === 0) return contents;
   if (compression === 1) return uncompress(contents);
-  throw new Error(
-    `Unsupported LevelDB compression type ${compression}. The Paseo app's storage format changed.`,
-  );
+  throw new UnsupportedCompressionError(compression);
 }
 
 interface BlockEntry {
