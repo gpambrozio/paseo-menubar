@@ -3,7 +3,7 @@ import {
   hostsFingerprint,
   type AppConfig,
   type HostEntry,
-} from "../config/host-config.js";
+} from "../config/host-entry.js";
 import type { HostStore } from "./host-store.js";
 import { createHostConnection, type HostConnection } from "./host-connection.js";
 import { errorText } from "../error-text.js";

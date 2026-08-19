@@ -1,4 +1,4 @@
-import { hostsFingerprint, type AppConfig, type HostEntry } from "../config/host-config.js";
+import { hostsFingerprint, type AppConfig, type HostEntry } from "../config/host-entry.js";
 import { errorText } from "../error-text.js";
 import type { RegistrySnapshot } from "./paseo-registry.js";
 

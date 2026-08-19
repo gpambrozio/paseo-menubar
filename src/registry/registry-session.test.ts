@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createRegistrySession } from "./registry-session.js";
-import type { AppConfig, HostEntry } from "../config/host-config.js";
+import type { AppConfig, HostEntry } from "../config/host-entry.js";
 import type { RegistrySnapshot } from "./paseo-registry.js";
 
 function host(id: string): HostEntry {

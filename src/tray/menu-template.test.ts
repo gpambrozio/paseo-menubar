@@ -20,8 +20,6 @@ const handlers = {
   onOpenWorkspace: vi.fn(),
   onOpenApp: vi.fn(),
   onRetryHost: vi.fn(),
-  onAddHostFromClipboard: vi.fn(),
-  onEditConfig: vi.fn(),
   onToggleLoginItem: vi.fn(),
   onQuit: vi.fn(),
 };
@@ -204,14 +202,22 @@ describe("buildMenuTemplate", () => {
     expect(handlers.onRetryHost).toHaveBeenCalledWith("h2");
   });
 
-  it("surfaces a configuration error as a row that opens the file", () => {
-    const model: TrayViewModel = { ...empty, configError: "config.json\n\nnot valid JSON" };
+  it("surfaces a configuration error as a row carrying the message as a tooltip", () => {
+    const model: TrayViewModel = { ...empty, configError: "registry error\n\nnot valid JSON" };
     const template = buildMenuTemplate(model, handlers, menuOptions());
     const row = template.find((item) => item.label === "Configuration error");
     expect(row).toBeDefined();
     expect(row?.toolTip).toContain("not valid JSON");
-    click(row);
-    expect(handlers.onEditConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the Paseo app from the configuration error row", () => {
+    const template = buildMenuTemplate(
+      { ...empty, configError: "something is wrong" },
+      handlers,
+      menuOptions(),
+    );
+    click(template.find((item) => item.label === "Configuration error"));
+    expect(handlers.onOpenApp).toHaveBeenCalledTimes(1);
   });
 
   it("names the invalid-entry status so a bad host is visible, not missing", () => {
@@ -259,13 +265,7 @@ describe("buildMenuTemplate", () => {
   it("always offers the footer actions, because AppIndicator swallows left-click", () => {
     const template = buildMenuTemplate(empty, handlers, menuOptions({ loginItemEnabled: true }));
     expect(template.map((i) => i.label)).toEqual(
-      expect.arrayContaining([
-        "Open Paseo",
-        "Add host from clipboard…",
-        "Edit configuration…",
-        "Start at login",
-        "Quit",
-      ]),
+      expect.arrayContaining(["Open Paseo", "Start at login", "Quit"]),
     );
 
     // Without this the app is only reachable through a workspace row, so an

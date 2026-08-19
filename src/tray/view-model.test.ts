@@ -263,9 +263,9 @@ describe("deriveTrayViewModel", () => {
 
   it("carries a configuration error through to the menu, keeping the last good hosts", () => {
     const model = deriveTrayViewModel([host([workspace("w1", { status: "failed" })])], {
-      configError: "config.json\n\nnot valid JSON",
+      configError: "registry error\n\nnot valid JSON",
     });
-    expect(model.configError).toBe("config.json\n\nnot valid JSON");
+    expect(model.configError).toBe("registry error\n\nnot valid JSON");
     expect(model.count).toBe(1);
   });
 

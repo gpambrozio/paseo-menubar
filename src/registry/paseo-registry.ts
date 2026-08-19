@@ -2,7 +2,7 @@ import { access } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { DirectTcpHostConnectionSchema } from "@getpaseo/protocol/host-connection-schema";
-import type { HostEntry } from "../config/host-config.js";
+import type { HostEntry } from "../config/host-entry.js";
 import { decodeLocalStorageValue, localStorageKey } from "./local-storage.js";
 import { readLevelDbValue } from "./leveldb-reader.js";
 
@@ -34,7 +34,7 @@ const APP_DIR_CANDIDATES = ["Paseo", "@getpaseo/desktop"];
  * reported, rather than silently vanishing.
  *
  * `directTcp` reuses the published `DirectTcpHostConnectionSchema` rather
- * than redefining the shape locally — the same schema `src/config/host-config.ts`
+ * than redefining the shape locally — the same schema `src/config/host-entry.ts`
  * uses for the app's own config — so a protocol change surfaces as a type
  * error here instead of silently drifting. `relay`, `directSocket`, and
  * `directPipe` have no published equivalent in this SDK version, so those
