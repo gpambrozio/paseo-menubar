@@ -1088,8 +1088,14 @@ import { decodeLocalStorageValue, localStorageKey } from "./local-storage.js";
 describe("localStorageKey", () => {
   it("frames the key the way Chromium stores it", () => {
     const key = localStorageKey("paseo://app", "@paseo:daemon-registry");
-    expect(Buffer.from(key).toString("latin1")).toBe(
-      "_paseo://app @paseo:daemon-registry",
+    // The separator is two control bytes, 0x00 0x01 -- not printable, so it
+    // is spelled out rather than embedded in a string literal.
+    expect(Buffer.from(key)).toEqual(
+      Buffer.concat([
+        Buffer.from("_paseo://app", "latin1"),
+        Buffer.from([0x00, 0x01]),
+        Buffer.from("@paseo:daemon-registry", "latin1"),
+      ]),
     );
   });
 });
@@ -1613,7 +1619,7 @@ describe("createRegistrySession", () => {
     expect(errors.at(-1)).toContain("torn read");
   });
 
-  it("reports an absent registry without applying an empty host set over a good one", async () => {
+  it("applies an empty host set when the registry key is absent", async () => {
     const { session, applied, errors } = harness([{ hosts: [host("a")], failures: [] }, null]);
     await session.start();
     await session.refresh();
@@ -2161,8 +2167,10 @@ git commit -m "test: registry session drives the fleet against a real daemon"
 - Modify: `CLAUDE.md`
 
 **Interfaces:**
-- Consumes: the test and file counts recorded in Task 9, Step 7.
+- Consumes: nothing.
 - Produces: nothing.
+
+Take the test and file counts **in this task**, not from Task 9 — Task 10 adds an integration test file after Task 9 ran, so any count recorded there is stale before it reaches `CLAUDE.md`.
 
 - [ ] **Step 1: Update the module table**
 
@@ -2204,7 +2212,7 @@ Delete the `**config.json` is written `0600`**` bullet from "Critical rules". Ad
 
 - [ ] **Step 3: Update the "Working here" block**
 
-Replace the test count with the numbers recorded in Task 9, Step 7:
+Run `npx vitest run` now and read the counts off that run — not off Task 9's, which predates Task 10's new test file. Replace the test count with what you just observed:
 
 ```bash
 npx vitest run                              # <N> tests, <M> files
