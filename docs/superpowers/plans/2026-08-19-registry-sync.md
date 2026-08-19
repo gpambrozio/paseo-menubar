@@ -1857,7 +1857,9 @@ Expected: PASS, 10 tests.
 
 Remove the `if (fingerprint === appliedFingerprint) return;` guard. Run the tests. Expected: the "does not rebuild when unchanged" test FAILS with two applies. Restore.
 
-Then change the `catch` in `readAndApply` to rethrow instead of reporting. Expected: the "keeps the last known-good hosts" and "never rejects" tests FAIL. Restore.
+Then, in `readAndApply`'s `catch`, replace `return;` with `snapshot = null;` so the failure falls through and is treated as an empty registry instead. Expected: the "keeps the last known-good hosts" test FAILS, because an empty host set gets applied over the good one. Restore.
+
+> Do **not** mutate that `catch` into a rethrow — it discriminates nothing. `safeRefresh`'s own `catch` performs identical recovery on any rejection from `serialize()`, so a rethrow only changes which block reports the same error, with no observable difference. Both catches are still correct and both should stay: the inner one guards `readRegistry`, while `safeRefresh`'s is the only thing standing between a throwing `applyConfig` and an unhandled rejection.
 
 - [ ] **Step 6: Commit**
 
