@@ -22,6 +22,17 @@ describe("decodeLocalStorageValue", () => {
     expect(decodeLocalStorageValue(value)).toBe("hosts");
   });
 
+  it("preserves a non-ASCII byte through the Latin1 path", () => {
+    // Chromium picks the Latin1 tag whenever every code unit is <= 0xFF, so a
+    // host label with an accent in it lands here, not on the UTF-16 branch.
+    // An ASCII-only assertion cannot tell this decode from a UTF-8 one: 0xE9
+    // is `é` in Latin1 and an invalid lead byte in UTF-8, which is what makes
+    // it the discriminating case.
+    const value = Buffer.concat([Buffer.from([0x01]), Buffer.from("café", "latin1")]);
+    expect(Buffer.from(value).at(-1)).toBe(0xe9);
+    expect(decodeLocalStorageValue(value)).toBe("café");
+  });
+
   it("decodes a UTF-16LE-tagged value", () => {
     const value = Buffer.concat([Buffer.from([0x00]), Buffer.from("hosts", "utf16le")]);
     expect(decodeLocalStorageValue(value)).toBe("hosts");

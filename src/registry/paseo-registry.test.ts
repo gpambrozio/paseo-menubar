@@ -258,4 +258,25 @@ describe("readRegistry", () => {
       failures: [],
     });
   });
+
+  it("reads a registry stored with the UTF-16LE value encoding", async () => {
+    // Chromium picks the encoding per value, so both tags are reachable from
+    // the same database. The fixture is generated for this case and was
+    // otherwise committed unread.
+    const appSupportDir = await tempDir();
+    await seedFixture(appSupportDir, "Paseo", "utf16");
+
+    expect(await readRegistry(appSupportDir)).toEqual({
+      hosts: [
+        {
+          id: "srv_fixture01",
+          label: "utf16",
+          type: "directTcp",
+          endpoint: "localhost:6767",
+          useTls: false,
+        },
+      ],
+      failures: [],
+    });
+  });
 });
