@@ -73,7 +73,11 @@ export function createRegistrySession(options: {
     const failures = snapshot?.failures ?? [];
 
     const problems: string[] = [];
-    if (snapshot === null) problems.push(NO_HOSTS_MESSAGE);
+    // Absent key and empty array are the same dead end for the user: no
+    // hosts, and no `config.json` or pairing flow left to add one with. Only
+    // a registry that produced *something* -- hosts, or hosts it had to drop
+    // and named -- has no need of this.
+    if (hosts.length === 0 && failures.length === 0) problems.push(NO_HOSTS_MESSAGE);
     // Part of the database was unreadable but a value came back anyway. The
     // hosts below are applied — they are the best answer available — and this
     // says they may be a superseded copy, which is the difference between a
@@ -112,8 +116,13 @@ export function createRegistrySession(options: {
     // for keys we do not care about.
     const fingerprint = hostsFingerprint(parsed.data.hosts);
     if (fingerprint === appliedFingerprint) return;
-    appliedFingerprint = fingerprint;
+    // Recorded only once the fleet has actually taken it. Claiming it up
+    // front is the mistake `host-fleet.ts` documents avoiding: a rebuild that
+    // dies partway would still look applied, and since the *next* read
+    // succeeds and clears the error row, the user would be left with no
+    // hosts, no error, and no way back.
     await applyConfig(parsed.data);
+    appliedFingerprint = fingerprint;
   }
 
   /** Serializes reads so a watcher burst cannot interleave two applies. */

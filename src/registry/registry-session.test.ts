@@ -134,6 +134,84 @@ describe("createRegistrySession", () => {
     expect(errors.at(-1)).toContain("could not be used");
   });
 
+  it("points at the Paseo app when the registry holds an empty host array", async () => {
+    // Distinct from an absent key: Paseo is installed and has stored a
+    // registry, it is just empty. Without a row the user gets zero hosts, a
+    // bare "No workspaces", and -- with config.json and pairing gone -- no
+    // route forward at all.
+    const { session, applied, errors } = harness([{ hosts: [], failures: [] }]);
+    await session.start();
+    expect(applied).toHaveLength(1);
+    expect(applied[0]!.hosts).toEqual([]);
+    expect(errors.at(-1)).toContain("No hosts yet");
+  });
+
+  it("re-applies the host set after applyConfig fails, rather than marking it applied", async () => {
+    const applied: AppConfig[] = [];
+    const errors: (string | null)[] = [];
+    let failNext = true;
+    const session = createRegistrySession({
+      readRegistry: async () => ({ hosts: [host("a")], failures: [] }),
+      watch: () => () => undefined,
+      applyConfig: async (config) => {
+        if (failNext) {
+          failNext = false;
+          throw new Error("fleet rebuild blew up");
+        }
+        applied.push(config);
+      },
+      onConfigError: (message) => errors.push(message),
+    });
+
+    await session.start();
+    expect(applied).toEqual([]);
+    expect(errors.at(-1)).toContain("fleet rebuild blew up");
+
+    // The fingerprint must not have been claimed: the next read sees the same
+    // host set, and if it counted as applied the fleet would never receive it
+    // -- while the successful read clears the error row, leaving no hosts, no
+    // error, and no recovery.
+    await session.refresh();
+    expect(applied).toHaveLength(1);
+    expect(errors.at(-1)).toBeNull();
+  });
+
+  it("stop() cancels the pending read, the poll, and the watcher", async () => {
+    vi.useFakeTimers();
+    try {
+      let reads = 0;
+      let fire = () => {};
+      let unwatched = false;
+      const session = createRegistrySession({
+        readRegistry: async () => {
+          reads++;
+          return { hosts: [host("a")], failures: [] };
+        },
+        watch: (onChange) => {
+          fire = onChange;
+          return () => {
+            unwatched = true;
+          };
+        },
+        applyConfig: async () => undefined,
+        onConfigError: () => undefined,
+        pollMs: 100,
+      });
+
+      await session.start();
+      expect(reads).toBe(1);
+
+      fire(); // schedules a debounced read that stop() has to cancel
+      session.stop();
+      await vi.advanceTimersByTimeAsync(2000);
+
+      expect(unwatched).toBe(true);
+      expect(reads).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("surfaces dropped hosts in the error row", async () => {
     const { session, errors } = harness([
       { hosts: [host("a")], failures: ["Pipe only — no connection the menu bar can use"] },
