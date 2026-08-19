@@ -67,6 +67,14 @@ function readBatches(file: Uint8Array): Uint8Array[] {
         if (!pendingCorrupt && pending.length > 0) batches.push(concat(pending));
         pending = [];
         pendingCorrupt = false;
+      } else {
+        // An unrecognized type is itself corruption. Mark any in-progress
+        // FIRST/MIDDLE reassembly as tainted rather than clearing `pending`
+        // outright: a later LAST still needs to see pendingCorrupt as true
+        // so it discards the whole batch, instead of finding an empty
+        // `pending` and wrongly treating its own fragment as a complete
+        // one-fragment batch.
+        pendingCorrupt = true;
       }
 
       pos = payloadEnd;
