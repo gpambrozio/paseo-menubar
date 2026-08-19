@@ -56,12 +56,17 @@ export type AppConfig = z.infer<typeof AppConfigSchema>;
  * app's registry apart from Chromium rewriting its leveldb for keys the tray
  * does not care about.
  *
- * Plain `JSON.stringify` is not stable enough: zod emits keys in schema order
- * while a hand-built entry keeps the order its literal used, so the same host
- * stringifies two ways.
+ * Plain `JSON.stringify` is not stable enough, in two ways. Zod emits keys in
+ * schema order while a hand-built entry keeps the order its literal used, so
+ * the same host stringifies two ways. And the list's order is now the Paseo
+ * app's serialization order, not a user-edited file's: if that app ever
+ * reorders its profiles, an order-sensitive fingerprint tears down and
+ * rebuilds every connection for an identical set of hosts. Ids are unique
+ * (`AppConfigSchema` enforces it), so sorting by id is a total order.
  */
 export function hostsFingerprint(hosts: HostEntry[]): string {
-  return JSON.stringify(hosts, (_key, value) => {
+  const ordered = [...hosts].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return JSON.stringify(ordered, (_key, value) => {
     if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>

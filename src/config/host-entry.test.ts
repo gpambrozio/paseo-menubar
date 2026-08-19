@@ -65,7 +65,7 @@ describe("hostsFingerprint", () => {
     expect(hostsFingerprint([relay("a:443")])).not.toBe(hostsFingerprint([relay("b:443")]));
   });
 
-  it("keeps host order significant", () => {
+  it("ignores host order, which belongs to the Paseo app and not to the user", () => {
     const host = (id: string): HostEntry => ({
       id,
       label: id,
@@ -73,8 +73,27 @@ describe("hostsFingerprint", () => {
       endpoint: "127.0.0.1:6767",
       useTls: false,
     });
-    expect(hostsFingerprint([host("a"), host("b")])).not.toBe(
+    // This assertion used to run the other way, from when the list came out
+    // of a file the user edited and its order was theirs. It is another
+    // program's serialization order now, and treating a reshuffle as a change
+    // tears down and rebuilds every live connection for an identical set.
+    expect(hostsFingerprint([host("a"), host("b")])).toBe(
       hostsFingerprint([host("b"), host("a")]),
     );
+  });
+
+  it("still separates two genuinely different host sets", () => {
+    const host = (id: string): HostEntry => ({
+      id,
+      label: id,
+      type: "directTcp",
+      endpoint: "127.0.0.1:6767",
+      useTls: false,
+    });
+    // Order-insensitive must not mean set-insensitive: dropping the sort key
+    // from the comparison, or hashing only the ids, would pass the test above
+    // and lose real changes here.
+    expect(hostsFingerprint([host("a"), host("b")])).not.toBe(hostsFingerprint([host("a")]));
+    expect(hostsFingerprint([host("a")])).not.toBe(hostsFingerprint([host("b")]));
   });
 });
