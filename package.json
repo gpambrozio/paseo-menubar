@@ -20,11 +20,13 @@
   "dependencies": {
     "@getpaseo/client": "0.4.0",
     "@getpaseo/protocol": "0.4.0",
+    "snappyjs": "^0.7.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@getpaseo/server": "0.4.0",
     "@types/node": "^24.6.0",
+    "@types/snappyjs": "^0.7.1",
     "classic-level": "^2.0.0",
     "electron": "41.2.0",
     "electron-builder": "^26.8.1",
