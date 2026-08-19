@@ -172,11 +172,27 @@ describe("findInLog: multi-fragment reassembly", () => {
   });
 
   it("discards the batch when an unrecognized fragment type appears between FIRST and LAST", () => {
+    // The LAST fragment here is deliberately a *well-formed* one-record batch
+    // for the same key, carrying a value the reader must never return.
+    //
+    // With `frag3` in this slot the test passes for the wrong reason: that
+    // fragment alone decodes to a garbage batch whose key matches nothing, so
+    // the result is empty even if the unrecognized-type branch cleared
+    // `pending` instead of tainting it — the exact bug wal.ts's comment says
+    // it prevents. A decoy that would decode cleanly is what makes this test
+    // discriminate.
+    const decoyValue = Buffer.from("decoy-carried-by-the-last-fragment", "latin1");
+    const decoyBatch = makeBatch([makeWriteRecord(key, decoyValue)]);
     const log = Buffer.concat([
       physicalRecord(TYPE_FIRST, frag1),
       physicalRecord(UNKNOWN_TYPE, frag2),
-      physicalRecord(TYPE_LAST, frag3),
+      physicalRecord(TYPE_LAST, decoyBatch),
     ]);
-    expect(findInLog(log, key)).toEqual([]);
+
+    const records = findInLog(log, key);
+    expect(records.map((record) => Buffer.from(record.value).toString("latin1"))).not.toContain(
+      decoyValue.toString("latin1"),
+    );
+    expect(records).toEqual([]);
   });
 });
