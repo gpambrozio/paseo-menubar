@@ -1,6 +1,7 @@
 import { access } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { DirectTcpHostConnectionSchema } from "@getpaseo/protocol/host-connection-schema";
 import type { HostEntry } from "../config/host-config.js";
 import { decodeLocalStorageValue, localStorageKey } from "./local-storage.js";
 import { readLevelDbValue } from "./leveldb-reader.js";
@@ -31,15 +32,16 @@ const APP_DIR_CANDIDATES = ["Paseo", "@getpaseo/desktop"];
  * Only the two connection shapes the tray can actually dial. `directSocket`
  * and `directPipe` are parsed so a host carrying one is recognised and
  * reported, rather than silently vanishing.
+ *
+ * `directTcp` reuses the published `DirectTcpHostConnectionSchema` rather
+ * than redefining the shape locally — the same schema `src/config/host-config.ts`
+ * uses for the app's own config — so a protocol change surfaces as a type
+ * error here instead of silently drifting. `relay`, `directSocket`, and
+ * `directPipe` have no published equivalent in this SDK version, so those
+ * stay hand-rolled.
  */
 const RegistryConnectionSchema = z.discriminatedUnion("type", [
-  z.object({
-    id: z.string(),
-    type: z.literal("directTcp"),
-    endpoint: z.string(),
-    useTls: z.boolean().optional(),
-    password: z.string().optional(),
-  }),
+  DirectTcpHostConnectionSchema,
   z.object({
     id: z.string(),
     type: z.literal("relay"),
@@ -115,8 +117,11 @@ export function hostEntriesFromRegistry(json: string): RegistrySnapshot {
         ...base,
         type: "directTcp",
         endpoint: connection.endpoint,
-        useTls: connection.useTls ?? false,
-        ...(connection.password ? { password: connection.password } : {}),
+        // `DirectTcpHostConnectionSchema` declares `useTls` with
+        // `.default(false)`, so the parsed output is already a plain
+        // boolean — no fallback needed here.
+        useTls: connection.useTls,
+        ...(connection.password !== undefined ? { password: connection.password } : {}),
       });
     } else {
       hosts.push({

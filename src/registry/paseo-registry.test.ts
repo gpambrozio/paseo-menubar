@@ -1,5 +1,40 @@
-import { describe, expect, it } from "vitest";
-import { hostEntriesFromRegistry } from "./paseo-registry.js";
+import { afterEach, describe, expect, it } from "vitest";
+import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { hostEntriesFromRegistry, readRegistry, registryLevelDbDir } from "./paseo-registry.js";
+
+const FIXTURES = new URL("./__fixtures__/", import.meta.url).pathname;
+
+const dirs: string[] = [];
+
+async function tempDir(): Promise<string> {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "paseo-registry-"));
+  dirs.push(dir);
+  return dir;
+}
+
+afterEach(async () => {
+  await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+function leveldbPath(appSupportDir: string, appDirName: string): string {
+  return path.join(appSupportDir, appDirName, "Local Storage", "leveldb");
+}
+
+/** Creates `<appSupportDir>/<appDirName>/Local Storage/leveldb/`, empty. */
+async function seedEmptyLevelDbDir(appSupportDir: string, appDirName: string): Promise<string> {
+  const dir = leveldbPath(appSupportDir, appDirName);
+  await mkdir(dir, { recursive: true });
+  return dir;
+}
+
+/** Populates `<appSupportDir>/<appDirName>/Local Storage/leveldb/` with a fixture's files. */
+async function seedFixture(appSupportDir: string, appDirName: string, fixture: string): Promise<string> {
+  const dir = await seedEmptyLevelDbDir(appSupportDir, appDirName);
+  await cp(path.join(FIXTURES, fixture), dir, { recursive: true });
+  return dir;
+}
 
 function profile(overrides: Record<string, unknown> = {}) {
   return {
@@ -129,5 +164,67 @@ describe("hostEntriesFromRegistry", () => {
 
   it("throws on malformed JSON rather than returning an empty host list", () => {
     expect(() => hostEntriesFromRegistry("{{{")).toThrow();
+  });
+});
+
+describe("registryLevelDbDir", () => {
+  it("returns the Paseo path when that directory exists", async () => {
+    const appSupportDir = await tempDir();
+    const expected = await seedEmptyLevelDbDir(appSupportDir, "Paseo");
+
+    expect(await registryLevelDbDir(appSupportDir)).toBe(expected);
+  });
+
+  it("falls back to @getpaseo/desktop when only that one exists", async () => {
+    const appSupportDir = await tempDir();
+    const expected = await seedEmptyLevelDbDir(appSupportDir, "@getpaseo/desktop");
+
+    expect(await registryLevelDbDir(appSupportDir)).toBe(expected);
+  });
+
+  it("prefers Paseo when both exist", async () => {
+    const appSupportDir = await tempDir();
+    const expected = await seedEmptyLevelDbDir(appSupportDir, "Paseo");
+    await seedEmptyLevelDbDir(appSupportDir, "@getpaseo/desktop");
+
+    expect(await registryLevelDbDir(appSupportDir)).toBe(expected);
+  });
+
+  it("throws naming both probed paths when neither exists", async () => {
+    const appSupportDir = await tempDir();
+    const paseoPath = leveldbPath(appSupportDir, "Paseo");
+    const desktopPath = leveldbPath(appSupportDir, "@getpaseo/desktop");
+
+    await expect(registryLevelDbDir(appSupportDir)).rejects.toSatisfy((error: unknown) => {
+      const message = (error as Error).message;
+      return message.includes(paseoPath) && message.includes(desktopPath);
+    });
+  });
+});
+
+describe("readRegistry", () => {
+  it("returns null when the directory exists but holds no registry key", async () => {
+    const appSupportDir = await tempDir();
+    await seedFixture(appSupportDir, "Paseo", "deleted");
+
+    expect(await readRegistry(appSupportDir)).toBeNull();
+  });
+
+  it("returns mapped hosts when pointed at a real fixture", async () => {
+    const appSupportDir = await tempDir();
+    await seedFixture(appSupportDir, "Paseo", "log-only");
+
+    expect(await readRegistry(appSupportDir)).toEqual({
+      hosts: [
+        {
+          id: "srv_fixture01",
+          label: "log-only",
+          type: "directTcp",
+          endpoint: "localhost:6767",
+          useTls: false,
+        },
+      ],
+      failures: [],
+    });
   });
 });
