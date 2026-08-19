@@ -4,6 +4,12 @@ import { rm, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+// Runtime artifacts LevelDB writes that carry no fixture content: LOCK is an
+// flock placeholder, LOG is an operational log full of timestamps and thread
+// pointers. Neither is read by any parser this fixture feeds, and committing
+// them would make every regeneration produce a timestamp-only diff.
+const RUNTIME_ARTIFACTS = ["LOCK", "LOG"];
+
 const KEY = Buffer.concat([
   Buffer.from("_paseo://app", "latin1"),
   Buffer.from([0x00, 0x01]),
@@ -43,6 +49,9 @@ async function build(name, write) {
   await db.open();
   await write(db);
   await db.close();
+  await Promise.all(
+    RUNTIME_ARTIFACTS.map((file) => rm(path.join(dir, file), { force: true })),
+  );
   console.log(`wrote ${name}`);
 }
 
