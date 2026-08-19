@@ -153,7 +153,8 @@ export function findInTable(file: Uint8Array, userKey: Uint8Array): InternalReco
     // An index entry's key is a separator >= every key in its block, so a
     // block can hold our key only if its separator is not below it.
     const separator = splitInternalKey(indexEntry.key).userKey;
-    if (compareBytes(separator, userKey) < 0) continue;
+    const cmp = compareBytes(separator, userKey);
+    if (cmp < 0) continue;
 
     const offset = readVarint64(indexEntry.value, 0);
     const size = readVarint64(indexEntry.value, offset.next);
@@ -164,6 +165,12 @@ export function findInTable(file: Uint8Array, userKey: Uint8Array): InternalReco
       if (!sameBytes(parsed.userKey, userKey)) continue;
       found.push({ ...parsed, value: entry.value });
     }
+
+    // separator >= every key in this block, so a separator strictly greater
+    // than the key we want means the next block starts past it. An equal
+    // separator does not: a run of records sharing one user key can straddle
+    // a block boundary.
+    if (cmp > 0) break;
   }
   return found;
 }

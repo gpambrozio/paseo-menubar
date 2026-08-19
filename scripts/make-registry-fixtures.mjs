@@ -86,3 +86,60 @@ await build("deleted", async (db) => {
 await build("utf16", async (db) => {
   await db.put(KEY, utf16Value(hosts("utf16")));
 });
+
+/**
+ * A synthetic filler key that sorts strictly before or strictly after the
+ * real registry key. `_paseo://app\x00\x01@paseo:...` has 0x40 ("@") as the
+ * first byte after the 0x00 0x01 tag; "0" (0x30) sorts before it and "z"
+ * (0x7a) sorts after it, so a run of "0-key-*" entries lands before the real
+ * key and a run of "z-key-*" entries lands after it, deterministically.
+ */
+function fillerKey(side, index) {
+  return Buffer.concat([
+    Buffer.from("_paseo://app", "latin1"),
+    Buffer.from([0x00, 0x01]),
+    Buffer.from(`${side}-key-${String(index).padStart(4, "0")}`, "latin1"),
+  ]);
+}
+
+function fillerValue(index) {
+  return latin1Value(`multi-block filler value ${index}`.padEnd(120, "-"));
+}
+
+// A key written many times with sizably large values before the table is
+// compacted. Internal keys sort by user key first, so every version of this
+// one user key lands contiguously in the sorted stream; making the run large
+// enough (well past the ~4KB default block size) forces the block writer to
+// split it mid-run, so its versions land in two different data blocks. This
+// is the one shape that can actually distinguish "stop at the first data
+// block whose separator is >= the target" from "stop only once the
+// separator is strictly greater": a same-key run that straddles a block
+// boundary needs the scan to continue past an equal separator. Sorts after
+// every "z-key-*" filler entry ("zz" > "z-").
+const STRADDLE_KEY = Buffer.concat([
+  Buffer.from("_paseo://app", "latin1"),
+  Buffer.from([0x00, 0x01]),
+  Buffer.from("zz-straddle", "latin1"),
+]);
+
+function straddleValue(index) {
+  return latin1Value(`straddle version ${index}`.padEnd(700, "*"));
+}
+
+// Many keys, compacted into more than one data block (LevelDB's default
+// block size is 4KB), with the real registry key placed after a full block's
+// worth of filler so a broken index seek would miss it. Deterministic: no
+// clock or PRNG, indices are zero-padded so ordering is stable.
+await build("multi-block", async (db) => {
+  for (let i = 0; i < 200; i++) {
+    await db.put(fillerKey("0", i), fillerValue(i));
+  }
+  await db.put(KEY, latin1Value(hosts("multi-block")));
+  for (let i = 0; i < 200; i++) {
+    await db.put(fillerKey("z", i), fillerValue(i));
+  }
+  for (let i = 0; i < 10; i++) {
+    await db.put(STRADDLE_KEY, straddleValue(i));
+  }
+  await db.compactRange(Buffer.alloc(0), Buffer.from([0xff, 0xff, 0xff, 0xff]));
+});
