@@ -16,6 +16,28 @@ function view(buf: Uint8Array): DataView {
   return new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
 }
 
+/** What one `.log` yielded, and how much of it had to be thrown away. */
+export interface LogScan {
+  records: InternalRecord[];
+  /**
+   * Fragments discarded because their checksum failed or their type was not
+   * one of FULL/FIRST/MIDDLE/LAST.
+   *
+   * Counted, rather than merely dropped, because a dropped fragment can be
+   * the newest write of the key we came for: the caller would otherwise
+   * return an older sibling file's value as authoritative with no signal that
+   * anything was missed. A fragment abandoned at the end of the file is *not*
+   * counted — a log being appended to routinely ends mid-batch, and that is
+   * the normal condition, not damage.
+   */
+  droppedFragments: number;
+}
+
+interface BatchScan {
+  batches: Uint8Array[];
+  droppedFragments: number;
+}
+
 /**
  * Reassembles the physical records of a write-ahead log into batch payloads.
  *
@@ -24,12 +46,14 @@ function view(buf: Uint8Array): DataView {
  * batches back-to-back.
  *
  * A fragment whose checksum fails is dropped along with the batch it belongs
- * to. The tail of a log being actively written is routinely torn, and that is
- * a normal condition here, not an error worth failing the whole read over.
+ * to, and counted. Reading while Chromium writes routinely tears the tail, so
+ * this is not worth failing the whole read over — but it is worth reporting,
+ * because the torn bytes may have been the newest value.
  */
-function readBatches(file: Uint8Array): Uint8Array[] {
+function readBatches(file: Uint8Array): BatchScan {
   const dv = view(file);
   const batches: Uint8Array[] = [];
+  let droppedFragments = 0;
   let pending: Uint8Array[] = [];
   let pendingCorrupt = false;
 
@@ -50,6 +74,7 @@ function readBatches(file: Uint8Array): Uint8Array[] {
       const checked = file.subarray(pos + 6, payloadEnd);
       const payload = file.subarray(pos + HEADER_SIZE, payloadEnd);
       const intact = crc32c(checked) === unmaskCrc(storedCrc);
+      if (!intact) droppedFragments += 1;
 
       if (type === TYPE_FULL) {
         if (intact) batches.push(payload);
@@ -75,12 +100,13 @@ function readBatches(file: Uint8Array): Uint8Array[] {
         // `pending` and wrongly treating its own fragment as a complete
         // one-fragment batch.
         pendingCorrupt = true;
+        if (intact) droppedFragments += 1;
       }
 
       pos = payloadEnd;
     }
   }
-  return batches;
+  return { batches, droppedFragments };
 }
 
 function concat(parts: Uint8Array[]): Uint8Array {
@@ -145,13 +171,14 @@ function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
   return true;
 }
 
-/** Every record for `userKey` in one `.log`. */
-export function findInLog(file: Uint8Array, userKey: Uint8Array): InternalRecord[] {
+/** Every record for `userKey` in one `.log`, plus what the log lost. */
+export function findInLog(file: Uint8Array, userKey: Uint8Array): LogScan {
   const found: InternalRecord[] = [];
-  for (const batch of readBatches(file)) {
+  const { batches, droppedFragments } = readBatches(file);
+  for (const batch of batches) {
     for (const record of batchRecords(batch)) {
       if (sameBytes(record.userKey, userKey)) found.push(record);
     }
   }
-  return found;
+  return { records: found, droppedFragments };
 }

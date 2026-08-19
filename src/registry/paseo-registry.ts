@@ -66,6 +66,13 @@ export interface RegistrySnapshot {
   hosts: HostEntry[];
   /** Hosts the tray cannot dial, phrased for the error row. Never silent. */
   failures: string[];
+  /**
+   * Set when the hosts above were read out of a database that was partly
+   * unreadable, so they may be superseded. The hosts are still applied — a
+   * healthy file's answer beats no answer — but the row has to say so, or a
+   * host the user deleted in the Paseo app stays in the tray looking healthy.
+   */
+  warning?: string;
 }
 
 type RegistryConnection = z.infer<typeof RegistryConnectionSchema>;
@@ -167,7 +174,10 @@ export async function registryLevelDbDir(appSupportDir: string): Promise<string>
 /** `null` means the app is installed but has never stored a registry. */
 export async function readRegistry(appSupportDir: string): Promise<RegistrySnapshot | null> {
   const dir = await registryLevelDbDir(appSupportDir);
-  const raw = await readLevelDbValue(dir, localStorageKey(ORIGIN, REGISTRY_KEY));
-  if (raw === null) return null;
-  return hostEntriesFromRegistry(decodeLocalStorageValue(raw));
+  const read = await readLevelDbValue(dir, localStorageKey(ORIGIN, REGISTRY_KEY));
+  if (read.value === null) return null;
+  const snapshot = hostEntriesFromRegistry(decodeLocalStorageValue(read.value));
+  // A value found next to an unreadable file is usable but not trustworthy as
+  // the last word; the caller applies it and shows the detail.
+  return read.parseFailure === null ? snapshot : { ...snapshot, warning: read.parseFailure };
 }

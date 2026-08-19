@@ -101,27 +101,42 @@ async function logBytes(fixture: string): Promise<Buffer> {
 
 describe("findInLog", () => {
   it("finds a record written but never compacted", async () => {
-    const records = findInLog(await logBytes("log-only"), KEY);
+    const { records } = findInLog(await logBytes("log-only"), KEY);
     expect(records).toHaveLength(1);
     expect(records[0]!.isDeletion).toBe(false);
     expect(Buffer.from(records[0]!.value).subarray(1).toString("latin1")).toContain("log-only");
   });
 
   it("reports a deletion as a deletion, not as an empty value", async () => {
-    const records = findInLog(await logBytes("deleted"), KEY);
+    const { records } = findInLog(await logBytes("deleted"), KEY);
     expect(records).toHaveLength(1);
     expect(records[0]!.isDeletion).toBe(true);
   });
 
   it("returns nothing for an unrelated key", async () => {
-    expect(findInLog(await logBytes("log-only"), Buffer.from("_nope", "latin1"))).toEqual([]);
+    expect(findInLog(await logBytes("log-only"), Buffer.from("_nope", "latin1")).records).toEqual(
+      [],
+    );
   });
 
   it("skips a record whose checksum does not match rather than trusting it", async () => {
     const bytes = Buffer.from(await logBytes("log-only"));
     // Corrupt the first record's payload, leaving its header intact.
     bytes[8] = bytes[8]! ^ 0xff;
-    expect(findInLog(bytes, KEY)).toEqual([]);
+    expect(findInLog(bytes, KEY).records).toEqual([]);
+  });
+
+  it("counts a dropped record so the caller can tell a torn log from an empty one", async () => {
+    const bytes = Buffer.from(await logBytes("log-only"));
+    bytes[8] = bytes[8]! ^ 0xff;
+    // Without this count a torn `.log` is indistinguishable from a log that
+    // simply never held the key, and the directory reader hands back an older
+    // sibling file's value as if it were current.
+    expect(findInLog(bytes, KEY).droppedFragments).toBe(1);
+  });
+
+  it("counts nothing when the log is intact", async () => {
+    expect(findInLog(await logBytes("log-only"), KEY).droppedFragments).toBe(0);
   });
 });
 
@@ -138,7 +153,7 @@ describe("findInLog: multi-fragment reassembly", () => {
       physicalRecord(TYPE_MIDDLE, frag2),
       physicalRecord(TYPE_LAST, frag3),
     ]);
-    const records = findInLog(log, key);
+    const { records } = findInLog(log, key);
     expect(records).toHaveLength(1);
     expect(records[0]!.isDeletion).toBe(false);
     expect(Buffer.from(records[0]!.value).toString("latin1")).toBe(value.toString("latin1"));
@@ -150,7 +165,7 @@ describe("findInLog: multi-fragment reassembly", () => {
       physicalRecord(TYPE_MIDDLE, frag2, 0),
       physicalRecord(TYPE_LAST, frag3),
     ]);
-    expect(findInLog(log, key)).toEqual([]);
+    expect(findInLog(log, key).records).toEqual([]);
   });
 
   it("does not let a FIRST with no matching LAST leak into the next batch", () => {
@@ -165,10 +180,13 @@ describe("findInLog: multi-fragment reassembly", () => {
       physicalRecord(TYPE_FULL, otherBatch),
     ]);
 
-    expect(findInLog(log, key)).toEqual([]);
-    const found = findInLog(log, otherKey);
+    expect(findInLog(log, key).records).toEqual([]);
+    const { records: found, droppedFragments } = findInLog(log, otherKey);
     expect(found).toHaveLength(1);
     expect(Buffer.from(found[0]!.value).toString("latin1")).toBe(otherValue.toString("latin1"));
+    // An abandoned FIRST is the normal shape of a log being appended to, not
+    // damage, so it must not raise an error row on every read.
+    expect(droppedFragments).toBe(0);
   });
 
   it("discards the batch when an unrecognized fragment type appears between FIRST and LAST", () => {
@@ -189,7 +207,8 @@ describe("findInLog: multi-fragment reassembly", () => {
       physicalRecord(TYPE_LAST, decoyBatch),
     ]);
 
-    const records = findInLog(log, key);
+    const { records, droppedFragments } = findInLog(log, key);
+    expect(droppedFragments).toBe(1);
     expect(records.map((record) => Buffer.from(record.value).toString("latin1"))).not.toContain(
       decoyValue.toString("latin1"),
     );

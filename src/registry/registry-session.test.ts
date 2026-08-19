@@ -76,6 +76,22 @@ describe("createRegistrySession", () => {
     expect(errors.at(-1)).toContain("No hosts yet");
   });
 
+  it("applies the hosts it got and still reports a partly unreadable database", async () => {
+    const { session, applied, errors } = harness([
+      {
+        hosts: [host("a")],
+        failures: [],
+        warning: "Could not read 1 of 2 LevelDB file(s) in /db; the host list may be out of date",
+      },
+    ]);
+    await session.start();
+    // Both halves matter: dropping the hosts over one torn file empties the
+    // tray, and dropping the warning presents a possibly-superseded host list
+    // as healthy.
+    expect(applied[0]!.hosts.map((entry) => entry.id)).toEqual(["a"]);
+    expect(errors.at(-1)).toContain("out of date");
+  });
+
   it("surfaces dropped hosts in the error row", async () => {
     const { session, errors } = harness([
       { hosts: [host("a")], failures: ["Pipe only — no connection the menu bar can use"] },

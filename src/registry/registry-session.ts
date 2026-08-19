@@ -74,6 +74,11 @@ export function createRegistrySession(options: {
 
     const problems: string[] = [];
     if (snapshot === null) problems.push(NO_HOSTS_MESSAGE);
+    // Part of the database was unreadable but a value came back anyway. The
+    // hosts below are applied — they are the best answer available — and this
+    // says they may be a superseded copy, which is the difference between a
+    // deleted host lingering visibly and lingering silently.
+    if (snapshot?.warning) problems.push(snapshot.warning);
     if (failures.length > 0) {
       problems.push(`These hosts could not be used:\n\n${failures.join("\n")}`);
     }

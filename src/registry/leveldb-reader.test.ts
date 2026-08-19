@@ -58,6 +58,13 @@ function text(value: Uint8Array | null): string {
   return Buffer.from(value).subarray(1).toString("latin1");
 }
 
+/** The value alone, asserting the read reported no damage along the way. */
+async function cleanValue(dir: string, key: Uint8Array): Promise<string> {
+  const result = await readLevelDbValue(dir, key);
+  expect(result.parseFailure).toBeNull();
+  return text(result.value);
+}
+
 /**
  * Flips a byte inside the given file's first data block, which trips the
  * block's CRC check the same way `sstable.test.ts` does — a generic parse
@@ -92,6 +99,32 @@ async function copyWithCorruptedTable(fixture: string): Promise<string> {
   await cp(src, dst, { recursive: true });
   const name = await findLdbName(dst);
   await corruptFile(path.join(dst, name));
+  return dst;
+}
+
+async function findLogName(dir: string): Promise<string> {
+  const names = (await readdir(dir)).filter((name) => name.endsWith(".log"));
+  if (names.length !== 1) throw new Error(`expected one .log in ${dir}, got ${names.length}`);
+  return names[0]!;
+}
+
+/**
+ * A copy of `fixture` with its `.log` corrupted but every other file intact —
+ * the mirror image of `copyWithCorruptedTable`. In `superseded` the `.log`
+ * holds the *newer* value, so this is the case where the damaged file is the
+ * authoritative one and the surviving `.ldb` is stale.
+ */
+async function copyWithCorruptedLog(fixture: string): Promise<string> {
+  const src = path.join(FIXTURES, fixture);
+  const dst = await mkdtemp(path.join(os.tmpdir(), "leveldb-reader-torn-log-"));
+  await cp(src, dst, { recursive: true });
+  const target = path.join(dst, await findLogName(dst));
+  const bytes = await readFile(target);
+  // Byte 8 lands inside the first physical record's payload (the header is 7
+  // bytes), so the header still frames a record and the CRC check is what
+  // rejects it.
+  bytes[8] = bytes[8]! ^ 0xff;
+  await writeFile(target, bytes);
   return dst;
 }
 
@@ -154,26 +187,26 @@ async function withUnsupportedCompression(fixture: string): Promise<string> {
 
 describe("readLevelDbValue", () => {
   it("reads a value that lives only in the log", async () => {
-    expect(text(await readLevelDbValue(path.join(FIXTURES, "log-only"), KEY))).toContain("log-only");
+    expect(await cleanValue(path.join(FIXTURES, "log-only"), KEY)).toContain("log-only");
   });
 
   it("reads a value that lives in a compacted table", async () => {
-    expect(text(await readLevelDbValue(path.join(FIXTURES, "compacted"), KEY))).toContain("compacted");
+    expect(await cleanValue(path.join(FIXTURES, "compacted"), KEY)).toContain("compacted");
   });
 
   it("prefers the newer log write over the older compacted value", async () => {
-    const value = text(await readLevelDbValue(path.join(FIXTURES, "superseded"), KEY));
+    const value = await cleanValue(path.join(FIXTURES, "superseded"), KEY);
     expect(value).toContain("fresh");
     expect(value).not.toContain("stale");
   });
 
   it("returns null when the newest record is a deletion", async () => {
-    expect(await readLevelDbValue(path.join(FIXTURES, "deleted"), KEY)).toBeNull();
+    expect((await readLevelDbValue(path.join(FIXTURES, "deleted"), KEY)).value).toBeNull();
   });
 
   it("returns null for a key that was never written", async () => {
     const absent = Buffer.from("_missing", "latin1");
-    expect(await readLevelDbValue(path.join(FIXTURES, "compacted"), absent)).toBeNull();
+    expect((await readLevelDbValue(path.join(FIXTURES, "compacted"), absent)).value).toBeNull();
   });
 
   it("rejects a directory that does not exist", async () => {
@@ -203,8 +236,41 @@ describe("readLevelDbValue", () => {
     // The corrupted file is the .ldb holding the stale value; the .log's
     // fresh value must still win, proving a skipped file does not suppress
     // a winner found elsewhere.
-    const value = text(await readLevelDbValue(dir, KEY));
-    expect(value).toContain("fresh");
+    const result = await readLevelDbValue(dir, KEY);
+    expect(text(result.value)).toContain("fresh");
+    // The good record survives, and the damaged sibling is still reported --
+    // the caller applies the hosts *and* shows the detail.
+    expect(result.parseFailure).toMatch(/1 of 2/);
+  });
+
+  it("reports the damage when the torn file was the one holding the newest value", async () => {
+    const dir = await copyWithCorruptedLog("superseded");
+    const result = await readLevelDbValue(dir, KEY);
+
+    // The `.log` held `fresh`; only `stale` survives. Returning it is right —
+    // it is the best answer left — but returning it *silently* is what let a
+    // host the user deleted in the Paseo app stay in the tray, credentials and
+    // all, behind a menu with no error row on it.
+    expect(text(result.value)).toContain("stale");
+    expect(result.parseFailure).toMatch(/1 of 2/);
+    expect(result.parseFailure).toMatch(/out of date/);
+  });
+
+  it("treats a deletion found next to an unreadable file as undetermined, not as an absent key", async () => {
+    const dir = await copyWithCorruptedTable("deleted");
+    // The `.log` holds the deletion, so it wins; the corrupted `.ldb` might
+    // have held a newer write. "The key is gone" cannot be concluded from a
+    // database we could only partly read — that reads as "zero hosts" rather
+    // than "keep the last known-good set", which is the wrong row entirely.
+    await expect(readLevelDbValue(dir, KEY)).rejects.toThrow(/could not be determined/);
+  });
+
+  it("scans a table named with the legacy .sst extension", async () => {
+    const src = path.join(FIXTURES, "compacted");
+    const dir = await mkdtemp(path.join(os.tmpdir(), "leveldb-reader-sst-"));
+    await cp(path.join(src, await findLdbName(src)), path.join(dir, "000005.sst"));
+
+    expect(await cleanValue(dir, KEY)).toContain("compacted");
   });
 
   it("propagates an unsupported compression type instead of treating it as a skippable parse failure", async () => {
@@ -223,7 +289,7 @@ describe("readLevelDbValue", () => {
 
     // A vanished file is not evidence of a bad file, so this must resolve
     // to "key absent", not reject the way a parse failure does.
-    await expect(readLevelDbValue(dir, KEY)).resolves.toBeNull();
+    await expect(readLevelDbValue(dir, KEY)).resolves.toEqual({ value: null, parseFailure: null });
   });
 
   it("still returns the good record when a sibling file has merely vanished", async () => {
@@ -234,7 +300,7 @@ describe("readLevelDbValue", () => {
     const ldbTarget = path.join(dir, await findLdbName(dir));
     readFileQueues.set(ldbTarget, [async () => { throw enoentError(ldbTarget); }]);
 
-    const value = text(await readLevelDbValue(dir, KEY));
+    const value = await cleanValue(dir, KEY);
     expect(value).toContain("fresh");
   });
 
@@ -254,7 +320,7 @@ describe("readLevelDbValue", () => {
       async () => goodBytes,
     ]);
 
-    const value = text(await readLevelDbValue(dir, KEY));
+    const value = await cleanValue(dir, KEY);
     expect(value).toContain("compacted");
   });
 });
