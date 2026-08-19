@@ -73,6 +73,7 @@ still appears in exactly two modules.
 | `registry/local-storage.ts` | Chromium localStorage record semantics: the `_<origin>\x00\x01<key>` framing and the leading encoding byte. |
 | `registry/paseo-registry.ts` | Locate the support directory, read the registry key, validate, map `HostProfile[]` to `HostEntry[]`. |
 | `registry/registry-session.ts` | Initial read, watch, debounce, fingerprint compare, apply to the fleet, own the error row. Replaces `config-session.ts`. |
+| `registry/registry-watcher.ts` | Keeping the watch attached across "not installed yet" and "the watch died". |
 
 Snappy decompression comes from `snappyjs` — pure JS, no native code. The code we write is
 block and log framing only.
@@ -115,7 +116,7 @@ apart from the two removed items.
 
 Reading a LevelDB properly means `CURRENT` → `MANIFEST` → version set → live files per
 level. We need one key, and LevelDB internal keys carry an 8-byte trailer of
-`(sequence << 8) | type`. So we scan every `.ldb` and `.log` in the directory, collect
+`(sequence << 8) | type`. So we scan every `.ldb`, `.sst`, and `.log` in the directory, collect
 every record matching our key, and take the highest sequence number, honoring type `0` as
 a deletion. Correct by construction, and it skips the version set entirely.
 
@@ -128,6 +129,14 @@ We never take the `LOCK`, so we read while Chromium writes and while compactions
 files underneath us. Both formats checksum their blocks with masked CRC32C. Checking it is
 what turns a torn read into "retry on the next tick" instead of "silently wrong
 credentials". A block that fails CRC is discarded, never parsed.
+
+Discarding is not enough on its own, and getting that wrong is what the first
+implementation did: the torn file may be the one holding the *newest* write, so dropping
+it quietly and returning an older sibling file's record presents a superseded host list —
+credentials included — as current. Every discard is therefore counted and travels back
+with the value, and the row says the hosts may be out of date. When no value survives at
+all, absence and damage are indistinguishable, so that case is reported as a failure
+rather than as "the key is gone".
 
 ### Compression is the drift canary
 
@@ -150,6 +159,11 @@ Per `HostProfile`:
 - `directSocket` and `directPipe` are skipped; the tray supports neither.
 - A host with no supported connection is dropped and counted into the error row, reusing
   the existing `noteEntryFailures` shape.
+- Two profiles carrying the same `serverId` collapse to the first, and the second is
+  counted into the error row the same way. The id keys the fleet's connection map, so
+  admitting both would leave one live socket wearing the other's label, type, and web
+  base url. The built config is then parsed through `AppConfigSchema` before it reaches
+  the fleet, which is what `host-fleet.ts`'s duplicate-id invariant is written against.
 
 Path discovery probes `Paseo` then `@getpaseo/desktop` under Application Support, so a
 development build of the desktop app still works.
@@ -158,8 +172,15 @@ development build of the desktop app still works.
 
 `fs.watch` on the leveldb directory, debounced 500ms because Chromium writes constantly for
 unrelated keys, then read → map → `hostsFingerprint` compare → `fleet.apply` only when the
-host set actually changed. A 60s poll backs it up: macOS `fs.watch` can miss events across
+host set actually changed. The fingerprint ignores the order of the host list: that order
+is the Paseo app's serialization order now, not a user's, so a reshuffle must not tear down
+live connections. A 60s poll backs it up: macOS `fs.watch` can miss events across
 the atomic renames a compaction performs.
+
+The watch is re-established rather than attached once. The directory may not exist at
+launch — Paseo can be installed afterwards — and a watch can die later, so every read
+re-attaches if nothing is attached, and the poll is what drives that when the tray has no
+hosts at all.
 
 ## Failure states
 
@@ -167,10 +188,18 @@ None of these may throw into the main process, and none may crash the tray.
 
 | State | Behaviour |
 | --- | --- |
-| Support directory absent | Zero hosts; row reports the Paseo desktop app was not found |
-| Key missing | Zero hosts; row points at pairing a host in the Paseo app |
+| Support directory absent | **Keep last known-good hosts**; row reports the Paseo desktop app was not found |
+| Key missing, or an empty registry | Zero hosts; row points at pairing a host in the Paseo app |
 | Parse, CRC, or schema failure | **Keep last known-good hosts**; row carries the detail |
+| Partly unreadable database with a value still found | Apply the hosts found; row says they may be out of date |
 | Unknown compression type | Keep last known-good hosts; row names the compression type |
+
+The first row said "zero hosts" until the code was reviewed against it. A missing
+support directory reaches the session as a rejected read, indistinguishable there from a
+torn one, so it takes the keep-last-known-good path — and that is the better behaviour:
+the two states agree on first launch, and they only diverge if Paseo is uninstalled or
+its storage moves mid-session, where dropping every live connection helps nobody. The
+table was wrong, not the code.
 
 The error row currently clicks through to `Edit configuration…`, which will not exist.
 It opens the Paseo desktop app instead, since that is where every one of these is fixed.

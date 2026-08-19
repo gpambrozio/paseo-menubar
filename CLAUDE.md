@@ -37,7 +37,7 @@ injection, and is tested without an Electron harness.
 
 | Module | Owns |
 | --- | --- |
-| `src/main.ts` | Wiring only. Lifecycle, tray creation, dialogs, `shell`, the registry file watcher, menu handlers. |
+| `src/main.ts` | Wiring only. Lifecycle, tray creation, dialogs, `shell`, `fs.watch` itself, menu handlers. |
 | `src/config/host-entry.ts` | The host schemas and their fingerprint. No I/O. |
 | `src/registry/binary.ts` | Varints and CRC32C. |
 | `src/registry/sstable.ts` | One LevelDB `.ldb`: footer, index, blocks, snappy. |
@@ -46,6 +46,7 @@ injection, and is tested without an Electron harness.
 | `src/registry/local-storage.ts` | Chromium localStorage key framing and value encoding. |
 | `src/registry/paseo-registry.ts` | Locate the Paseo app, validate, map to `HostEntry`. |
 | `src/registry/registry-session.ts` | Watch, debounce, fingerprint, apply, own the error row. |
+| `src/registry/registry-watcher.ts` | Keeping the directory watch attached: not installed yet, or the watch died. |
 | `src/daemon/host-connection.ts` | One host: connect, seed, subscribe, reconnect, report status. **All SDK use lives here.** |
 | `src/daemon/host-fleet.ts` | The set of connections: apply a config, isolate a bad entry, retry, serialize rebuilds. |
 | `src/daemon/host-store.ts` | Replicated workspaces and agents, keyed by host. |
@@ -100,7 +101,7 @@ injection, and is tested without an Electron harness.
 
 ```bash
 SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm install   # Homebrew libvips breaks sharp's prebuild
-npx vitest run                              # 215 tests, 16 files
+npx vitest run                              # 238 tests, 17 files
 npm run typecheck
 npm run fixtures:registry                   # regenerate LevelDB test fixtures
 ```
