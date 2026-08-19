@@ -1,0 +1,139 @@
+import { describe, expect, it, vi } from "vitest";
+import { createRegistrySession } from "./registry-session.js";
+import type { AppConfig, HostEntry } from "../config/host-config.js";
+import type { RegistrySnapshot } from "./paseo-registry.js";
+
+function host(id: string): HostEntry {
+  return { id, label: id, type: "directTcp", endpoint: "10.0.0.1:6767", useTls: false };
+}
+
+function harness(reads: Array<RegistrySnapshot | null | Error>) {
+  const applied: AppConfig[] = [];
+  const errors: (string | null)[] = [];
+  let call = 0;
+  const session = createRegistrySession({
+    readRegistry: async () => {
+      const next = reads[Math.min(call++, reads.length - 1)];
+      if (next instanceof Error) throw next;
+      return next ?? null;
+    },
+    // No watcher in tests: refresh() is driven explicitly.
+    watch: () => () => undefined,
+    applyConfig: async (config) => {
+      applied.push(config);
+    },
+    onConfigError: (message) => errors.push(message),
+  });
+  return { session, applied, errors };
+}
+
+describe("createRegistrySession", () => {
+  it("applies the hosts it read and clears the error row", async () => {
+    const { session, applied, errors } = harness([{ hosts: [host("a")], failures: [] }]);
+    await session.start();
+    expect(applied).toHaveLength(1);
+    expect(applied[0]!.hosts.map((entry) => entry.id)).toEqual(["a"]);
+    expect(errors.at(-1)).toBeNull();
+  });
+
+  it("does not rebuild the fleet when the host set is unchanged", async () => {
+    const snapshot = { hosts: [host("a")], failures: [] };
+    const { session, applied } = harness([snapshot, snapshot]);
+    await session.start();
+    await session.refresh();
+    expect(applied).toHaveLength(1);
+  });
+
+  it("rebuilds when the host set actually changes", async () => {
+    const { session, applied } = harness([
+      { hosts: [host("a")], failures: [] },
+      { hosts: [host("a"), host("b")], failures: [] },
+    ]);
+    await session.start();
+    await session.refresh();
+    expect(applied).toHaveLength(2);
+    expect(applied[1]!.hosts.map((entry) => entry.id)).toEqual(["a", "b"]);
+  });
+
+  it("keeps the last known-good hosts when a later read fails", async () => {
+    const { session, applied, errors } = harness([
+      { hosts: [host("a")], failures: [] },
+      new Error("torn read"),
+    ]);
+    await session.start();
+    await session.refresh();
+    // Nothing re-applied: the good host set stays live.
+    expect(applied).toHaveLength(1);
+    expect(errors.at(-1)).toContain("torn read");
+  });
+
+  it("applies an empty host set when the registry key is absent", async () => {
+    const { session, applied, errors } = harness([{ hosts: [host("a")], failures: [] }, null]);
+    await session.start();
+    await session.refresh();
+    expect(applied).toHaveLength(2);
+    expect(applied[1]!.hosts).toEqual([]);
+    expect(errors.at(-1)).toContain("No hosts yet");
+  });
+
+  it("surfaces dropped hosts in the error row", async () => {
+    const { session, errors } = harness([
+      { hosts: [host("a")], failures: ["Pipe only — no connection the menu bar can use"] },
+    ]);
+    await session.start();
+    expect(errors.at(-1)).toContain("Pipe only");
+  });
+
+  it("shows a registry problem and a fleet problem at the same time", async () => {
+    const { session, errors } = harness([null]);
+    await session.start();
+    session.noteEntryFailures(["h1 — unreachable"]);
+    expect(errors.at(-1)).toContain("No hosts yet");
+    expect(errors.at(-1)).toContain("h1 — unreachable");
+  });
+
+  it("clearing the fleet's problems does not clear the registry's", async () => {
+    const { session, errors } = harness([null]);
+    await session.start();
+    session.noteEntryFailures(["h1 — unreachable"]);
+    session.noteEntryFailures([]);
+    expect(errors.at(-1)).toContain("No hosts yet");
+    expect(errors.at(-1)).not.toContain("unreachable");
+  });
+
+  it("never rejects when the first read fails", async () => {
+    const { session, errors } = harness([new Error("nope")]);
+    await expect(session.start()).resolves.toBeUndefined();
+    expect(errors.at(-1)).toContain("nope");
+  });
+
+  it("debounces a burst of watcher events into one read", async () => {
+    vi.useFakeTimers();
+    try {
+      let reads = 0;
+      let fire = () => {};
+      const session = createRegistrySession({
+        readRegistry: async () => {
+          reads++;
+          return { hosts: [host("a")], failures: [] };
+        },
+        watch: (onChange) => {
+          fire = onChange;
+          return () => undefined;
+        },
+        applyConfig: async () => undefined,
+        onConfigError: () => undefined,
+      });
+      await session.start();
+      expect(reads).toBe(1);
+      fire();
+      fire();
+      fire();
+      await vi.advanceTimersByTimeAsync(600);
+      expect(reads).toBe(2);
+      session.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
