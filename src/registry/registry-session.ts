@@ -14,6 +14,10 @@ export interface RegistrySession {
 
 const NO_HOSTS_MESSAGE = "No hosts yet. Pair a host in the Paseo app.";
 
+function describeUnusableHosts(failures: string[]): string {
+  return `These hosts could not be used:\n\n${failures.join("\n")}`;
+}
+
 /**
  * Owns the tray's view of the Paseo app's host registry: when to re-read it,
  * whether anything changed, and what the error row says.
@@ -32,11 +36,18 @@ export function createRegistrySession(options: {
   watch: (onChange: () => void) => () => void;
   applyConfig: (config: AppConfig) => Promise<void>;
   onConfigError: (message: string | null) => void;
+  /**
+   * Runs after every read, whether it succeeded or not. Production re-attaches
+   * the directory watch here: a read that got as far as running means the
+   * directory may exist now even if it did not at launch, which is what makes
+   * installing Paseo mid-session take effect on the next poll rather than never.
+   */
+  afterRead?: () => void;
   /** Safety net for events the watcher misses. Zero disables it. */
   pollMs?: number;
   debounceMs?: number;
 }): RegistrySession {
-  const { readRegistry, watch, applyConfig, onConfigError } = options;
+  const { readRegistry, watch, applyConfig, onConfigError, afterRead } = options;
   const pollMs = options.pollMs ?? 60_000;
   const debounceMs = options.debounceMs ?? 500;
 
@@ -44,7 +55,7 @@ export function createRegistrySession(options: {
   let stopWatching: (() => void) | null = null;
   let debounceTimer: NodeJS.Timeout | null = null;
   let pollTimer: NodeJS.Timeout | null = null;
-  let running: Promise<void> | null = null;
+  let running: Promise<void> = Promise.resolve();
 
   // Two independent problems, reported through one menu row: reading the
   // registry, and entries the fleet could not use. Either can be fixed without
@@ -57,7 +68,7 @@ export function createRegistrySession(options: {
     onConfigError(problems.length > 0 ? problems.join("\n\n") : null);
   }
 
-  async function readAndApply(): Promise<void> {
+  async function readOnce(): Promise<void> {
     let snapshot: RegistrySnapshot | null;
     try {
       snapshot = await readRegistry();
@@ -83,9 +94,7 @@ export function createRegistrySession(options: {
     // says they may be a superseded copy, which is the difference between a
     // deleted host lingering visibly and lingering silently.
     if (snapshot?.warning) problems.push(snapshot.warning);
-    if (failures.length > 0) {
-      problems.push(`These hosts could not be used:\n\n${failures.join("\n")}`);
-    }
+    if (failures.length > 0) problems.push(describeUnusableHosts(failures));
 
     // The host set is hand-built from another program's storage, so it is
     // parsed before the fleet sees it. `host-fleet.ts` justifies its
@@ -116,31 +125,43 @@ export function createRegistrySession(options: {
     // for keys we do not care about.
     const fingerprint = hostsFingerprint(parsed.data.hosts);
     if (fingerprint === appliedFingerprint) return;
-    // Recorded only once the fleet has actually taken it. Claiming it up
-    // front is the mistake `host-fleet.ts` documents avoiding: a rebuild that
-    // dies partway would still look applied, and since the *next* read
-    // succeeds and clears the error row, the user would be left with no
-    // hosts, no error, and no way back.
-    await applyConfig(parsed.data);
-    appliedFingerprint = fingerprint;
-  }
-
-  /** Serializes reads so a watcher burst cannot interleave two applies. */
-  function serialize(): Promise<void> {
-    const next = (running ?? Promise.resolve()).then(readAndApply, readAndApply);
-    running = next.catch(() => undefined);
-    return next;
-  }
-
-  async function safeRefresh(): Promise<void> {
     try {
-      await serialize();
+      await applyConfig(parsed.data);
+      // Recorded only once the fleet has actually taken it. Claiming it up
+      // front is the mistake `host-fleet.ts` documents avoiding: a rebuild
+      // that dies partway would still look applied.
+      appliedFingerprint = fingerprint;
     } catch (error) {
-      // serialize() already routes read failures to the error row; this is the
-      // last line against applyConfig throwing.
+      // The fleet may be half torn down, so *nothing* counts as applied any
+      // more -- not even the set that was live before this one. Keeping the
+      // old fingerprint here meant a registry that reverted to it was skipped
+      // as "unchanged" while the fleet sat empty: no hosts, no error row, and
+      // no way back until the registry changed to something new. The read's
+      // own problems stay in the row too; they are still true.
+      appliedFingerprint = null;
+      problems.push(`The hosts could not be applied:\n\n${errorText(error)}`);
+      registryError = problems.join("\n\n");
+      refreshConfigError();
+    }
+  }
+
+  /** One read, start to finish, that cannot reject. */
+  async function readAndApply(): Promise<void> {
+    try {
+      await readOnce();
+      afterRead?.();
+    } catch (error) {
+      // Nothing above is expected to get here, but a rejection that escaped
+      // would take the process down, and the row is a better place for it.
       registryError = errorText(error);
       refreshConfigError();
     }
+  }
+
+  /** Serializes reads so a watcher burst cannot interleave two applies. */
+  function refresh(): Promise<void> {
+    running = running.then(readAndApply);
+    return running;
   }
 
   return {
@@ -149,24 +170,21 @@ export function createRegistrySession(options: {
         if (debounceTimer) clearTimeout(debounceTimer);
         debounceTimer = setTimeout(() => {
           debounceTimer = null;
-          void safeRefresh();
+          void refresh();
         }, debounceMs);
       });
       if (pollMs > 0) {
-        pollTimer = setInterval(() => void safeRefresh(), pollMs);
+        pollTimer = setInterval(() => void refresh(), pollMs);
         // A background poll must never hold the process open on its own.
         pollTimer.unref?.();
       }
-      await safeRefresh();
+      await refresh();
     },
 
-    refresh() {
-      return safeRefresh();
-    },
+    refresh,
 
     noteEntryFailures(failures) {
-      fleetError =
-        failures.length > 0 ? `These hosts could not be used:\n\n${failures.join("\n")}` : null;
+      fleetError = failures.length > 0 ? describeUnusableHosts(failures) : null;
       refreshConfigError();
     },
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createRegistryWatcher } from "./registry-watcher.js";
+import { createRegistryWatcher, isRegistryFileEvent } from "./registry-watcher.js";
 
 /** Lets every pending `resolveDir` continuation run. */
 function flush(): Promise<void> {
@@ -140,6 +140,31 @@ describe("createRegistryWatcher", () => {
     expect(opens).toHaveLength(1);
   });
 
+  it("stays detached, and tries again later, when open itself throws", async () => {
+    let attempts = 0;
+    const watcher = createRegistryWatcher({
+      resolveDir: async () => "/db",
+      open: () => {
+        attempts++;
+        // `fs.watch` throws synchronously when the directory vanished between
+        // `resolveDir` and here. That must not be an unhandled rejection, and
+        // it must not count as attached either, or the tray would sit on the
+        // poll for the life of the process with a watch it never had. This
+        // pins the containment the promise chain provides; it is the reason
+        // `open` is called inside `.then` rather than after it.
+        if (attempts === 1) throw new Error("ENOENT: no such file or directory, watch '/db'");
+        return () => undefined;
+      },
+    });
+    expect(() => watcher.watch(() => undefined)).not.toThrow();
+    await flush();
+    expect(attempts).toBe(1);
+
+    watcher.ensureAttached();
+    await flush();
+    expect(attempts).toBe(2);
+  });
+
   it("does not attach a directory that resolves after the watcher was detached", async () => {
     let release: (dir: string) => void = () => {};
     const { watcher, opens } = harness(
@@ -155,5 +180,25 @@ describe("createRegistryWatcher", () => {
     await flush();
 
     expect(opens).toEqual([]);
+  });
+});
+
+describe("isRegistryFileEvent", () => {
+  it("passes the files the reader opens", () => {
+    expect(isRegistryFileEvent("000005.ldb")).toBe(true);
+    expect(isRegistryFileEvent("000004.sst")).toBe(true);
+    expect(isRegistryFileEvent("000036.log")).toBe(true);
+    expect(isRegistryFileEvent(Buffer.from("000036.log"))).toBe(true);
+  });
+
+  it("drops LevelDB's bookkeeping files, which cannot change the value", () => {
+    for (const name of ["LOG", "LOG.old", "LOCK", "CURRENT", "MANIFEST-000001", "000037.dbtmp"]) {
+      expect(isRegistryFileEvent(name)).toBe(false);
+    }
+  });
+
+  it("passes an event with no file name rather than risk missing one", () => {
+    expect(isRegistryFileEvent(null)).toBe(true);
+    expect(isRegistryFileEvent(undefined)).toBe(true);
   });
 });

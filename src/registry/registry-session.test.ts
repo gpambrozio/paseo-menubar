@@ -176,6 +176,79 @@ describe("createRegistrySession", () => {
     expect(errors.at(-1)).toBeNull();
   });
 
+  it("re-applies the previous host set when the registry reverts after a failed apply", async () => {
+    const applied: AppConfig[] = [];
+    const errors: (string | null)[] = [];
+    let current: HostEntry[] = [host("a")];
+    let failFor: string | null = null;
+    const session = createRegistrySession({
+      readRegistry: async () => ({ hosts: current, failures: [] }),
+      watch: () => () => undefined,
+      applyConfig: async (config) => {
+        if (config.hosts.some((entry) => entry.id === failFor)) throw new Error("fleet rebuild blew up");
+        applied.push(config);
+      },
+      onConfigError: (message) => errors.push(message),
+    });
+
+    await session.start();
+    expect(applied).toHaveLength(1);
+
+    // The fleet tears down before it rebuilds, so a rebuild that throws
+    // leaves it empty -- whatever was live before is gone too.
+    current = [host("b")];
+    failFor = "b";
+    await session.refresh();
+    expect(errors.at(-1)).toContain("fleet rebuild blew up");
+
+    // The user reverts in Paseo. That is the same set the session applied
+    // first, and treating it as "unchanged" here left the fleet empty with a
+    // clear error row: no hosts, no error, no way back.
+    current = [host("a")];
+    await session.refresh();
+    expect(applied).toHaveLength(2);
+    expect(applied[1]!.hosts.map((entry) => entry.id)).toEqual(["a"]);
+    expect(errors.at(-1)).toBeNull();
+  });
+
+  it("keeps the read's own problems in the row when the apply fails", async () => {
+    const errors: (string | null)[] = [];
+    const session = createRegistrySession({
+      readRegistry: async () => ({
+        hosts: [host("a")],
+        failures: ["Pipe only — no connection the menu bar can use"],
+      }),
+      watch: () => () => undefined,
+      applyConfig: async () => {
+        throw new Error("fleet rebuild blew up");
+      },
+      onConfigError: (message) => errors.push(message),
+    });
+    await session.start();
+    // Both are true at once and both are the user's to act on.
+    expect(errors.at(-1)).toContain("Pipe only");
+    expect(errors.at(-1)).toContain("fleet rebuild blew up");
+  });
+
+  it("runs afterRead after every read, failed ones included", async () => {
+    let afterReads = 0;
+    const withHook = createRegistrySession({
+      readRegistry: async () => {
+        throw new Error("Paseo desktop app not found");
+      },
+      watch: () => () => undefined,
+      applyConfig: async () => undefined,
+      onConfigError: () => undefined,
+      afterRead: () => afterReads++,
+    });
+    await withHook.start();
+    // A failed read is exactly the case that matters: the directory was
+    // absent at launch, and this is what re-checks for it on every poll.
+    expect(afterReads).toBe(1);
+    await withHook.refresh();
+    expect(afterReads).toBe(2);
+  });
+
   it("stop() cancels the pending read, the poll, and the watcher", async () => {
     vi.useFakeTimers();
     try {

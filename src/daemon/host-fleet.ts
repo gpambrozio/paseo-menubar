@@ -76,8 +76,9 @@ export function createHostFleet(options: {
   let pending: Promise<void> = Promise.resolve();
 
   /**
-   * Rebuilds the connection fleet. Our own writes trip the config watcher, so
-   * this no-ops when the host list is unchanged rather than churning sockets.
+   * Rebuilds the connection fleet. Chromium rewrites the registry's database
+   * for keys the tray does not care about, so this no-ops when the host list
+   * is unchanged rather than churning sockets.
    */
   async function applyHosts(config: AppConfig): Promise<void> {
     const fingerprint = hostsFingerprint(config.hosts);

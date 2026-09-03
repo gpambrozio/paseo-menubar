@@ -11,12 +11,26 @@
  *
  * Nothing here rejects or throws. An `FSWatcher` `'error'` with no listener
  * takes the process down, and so does a floating rejected promise, so both
- * are contained: `open`'s implementation reports an error rather than raising
- * one, and every path off `resolveDir` is caught.
+ * are contained: `open`'s implementation reports a later failure through
+ * `onError` rather than raising it, and a throw from `open` itself lands in
+ * the same catch as a failed `resolveDir`, because `open` is called inside
+ * that promise chain on purpose.
  *
  * `fs.watch` itself is injected, which keeps this module free of both Electron
  * and the filesystem and lets the reattachment logic be tested directly.
  */
+
+/**
+ * Whether a directory event names a file the reader opens. Chromium also
+ * rewrites `LOG`, `MANIFEST-*`, `CURRENT`, and `LOCK` in the same directory,
+ * and none of those can change the registry's value, so they are not worth a
+ * rescan. A missing name (macOS can omit it) passes through, so nothing is
+ * ever missed for want of a filter.
+ */
+export function isRegistryFileEvent(filename: string | Buffer | null | undefined): boolean {
+  if (filename == null) return true;
+  return /\.(ldb|sst|log)$/.test(String(filename));
+}
 export interface RegistryWatcher {
   /** Matches `createRegistrySession`'s `watch`. Returns the detach function. */
   watch(onChange: () => void): () => void;
@@ -28,9 +42,11 @@ export interface RegistryWatcherOptions {
   /** Resolves the directory to watch; rejects when Paseo is not installed. */
   resolveDir: () => Promise<string>;
   /**
-   * Starts one watch and returns its detach function. It must not throw:
-   * a directory that vanishes between resolution and this call is expected,
-   * and is reported through `onError` like any other failure.
+   * Starts one watch and returns its detach function. A failure after the
+   * watch is up is reported through `onError`. A synchronous throw -- which
+   * `fs.watch` does when the directory vanished between resolution and this
+   * call -- is tolerated: the watcher stays unattached and the next read
+   * tries again.
    */
   open: (dir: string, handlers: { onChange: () => void; onError: () => void }) => () => void;
 }
@@ -63,7 +79,11 @@ export function createRegistryWatcher(options: RegistryWatcherOptions): Registry
         });
       })
       .catch(() => {
-        // Paseo is not installed. The session's poll calls back here.
+        // Two ways here: `resolveDir` rejected (Paseo is not installed), or
+        // `open` threw (the directory vanished between resolution and the
+        // call, which `fs.watch` reports synchronously). Either way nothing
+        // is attached and `detach` is still null, so the session's next
+        // read -- it calls back here after every one -- tries again.
         resolving = false;
       });
   }
