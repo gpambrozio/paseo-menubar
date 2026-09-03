@@ -1,4 +1,4 @@
-import { crc32c, readVarint32, unmaskCrc } from "./binary.js";
+import { crc32c, readVarint32, unmaskCrc, view } from "./binary.js";
 import type { InternalRecord } from "./sstable.js";
 
 const BLOCK_SIZE = 32768;
@@ -12,16 +12,13 @@ const TYPE_LAST = 4;
 const RECORD_DELETION = 0;
 const RECORD_VALUE = 1;
 
-function view(buf: Uint8Array): DataView {
-  return new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
-}
-
 /** What one `.log` yielded, and how much of it had to be thrown away. */
 export interface LogScan {
   records: InternalRecord[];
   /**
-   * Fragments discarded because their checksum failed or their type was not
-   * one of FULL/FIRST/MIDDLE/LAST.
+   * Fragments discarded because their checksum failed, their type was not
+   * one of FULL/FIRST/MIDDLE/LAST, or their declared length ran past the
+   * block that holds them.
    *
    * Counted, rather than merely dropped, because a dropped fragment can be
    * the newest write of the key we came for: the caller would otherwise
@@ -43,7 +40,7 @@ interface BatchScan {
  *
  * A log is a sequence of 32KB blocks, and one batch can be split across block
  * boundaries into FIRST/MIDDLE/LAST fragments, so this cannot simply read
- * batches back-to-back.
+ * batches back-to-back. A FULL fragment is a FIRST and a LAST in one.
  *
  * A fragment whose checksum fails is dropped along with the batch it belongs
  * to, and counted. Reading while Chromium writes routinely tears the tail, so
@@ -55,6 +52,8 @@ function readBatches(file: Uint8Array): BatchScan {
   const batches: Uint8Array[] = [];
   let droppedFragments = 0;
   let pending: Uint8Array[] = [];
+  // Once any fragment of the batch under assembly is bad, the whole batch is
+  // discarded at its LAST rather than spliced together with a hole in it.
   let pendingCorrupt = false;
 
   for (let blockStart = 0; blockStart < file.length; blockStart += BLOCK_SIZE) {
@@ -67,57 +66,53 @@ function readBatches(file: Uint8Array): BatchScan {
       // A run of zeroes is the block's trailing padding, not a record.
       if (type === 0 && length === 0) break;
       const payloadEnd = pos + HEADER_SIZE + length;
-      if (payloadEnd > blockEnd) break; // truncated tail
+      if (payloadEnd > blockEnd) {
+        // At the end of the file this is the torn tail of a log still being
+        // appended to, which is normal. Inside an earlier block it is a
+        // record claiming more bytes than its block holds -- the corruption
+        // LevelDB itself reports as "bad record length" -- and the batch in
+        // progress can no longer be trusted to pair up with whatever the
+        // next block starts with.
+        if (blockEnd !== file.length) {
+          droppedFragments += 1;
+          pendingCorrupt = true;
+        }
+        break;
+      }
 
       const storedCrc = dv.getUint32(pos, true);
       // The checksum covers the type byte and the payload, not the header.
       const checked = file.subarray(pos + 6, payloadEnd);
       const payload = file.subarray(pos + HEADER_SIZE, payloadEnd);
       const intact = crc32c(checked) === unmaskCrc(storedCrc);
-      if (!intact) droppedFragments += 1;
+      const known =
+        type === TYPE_FULL || type === TYPE_FIRST || type === TYPE_MIDDLE || type === TYPE_LAST;
+      if (!intact || !known) droppedFragments += 1;
+      pos = payloadEnd;
 
-      if (type === TYPE_FULL) {
-        if (intact) batches.push(payload);
-        pending = [];
-        pendingCorrupt = false;
-      } else if (type === TYPE_FIRST) {
-        pending = [payload];
-        pendingCorrupt = !intact;
-      } else if (type === TYPE_MIDDLE) {
-        pending.push(payload);
-        pendingCorrupt ||= !intact;
-      } else if (type === TYPE_LAST) {
-        pending.push(payload);
-        pendingCorrupt ||= !intact;
-        if (!pendingCorrupt && pending.length > 0) batches.push(concat(pending));
-        pending = [];
-        pendingCorrupt = false;
-      } else {
-        // An unrecognized type is itself corruption. Mark any in-progress
-        // FIRST/MIDDLE reassembly as tainted rather than clearing `pending`
-        // outright: a later LAST still needs to see pendingCorrupt as true
-        // so it discards the whole batch, instead of finding an empty
-        // `pending` and wrongly treating its own fragment as a complete
-        // one-fragment batch.
+      if (!known) {
+        // An unrecognized type is itself corruption. Taint the batch in
+        // progress rather than clearing it: a later LAST must see the taint
+        // and discard the whole batch, instead of finding an empty `pending`
+        // and treating its own fragment as a complete one-fragment batch.
         pendingCorrupt = true;
-        if (intact) droppedFragments += 1;
+        continue;
       }
 
-      pos = payloadEnd;
+      if (type === TYPE_FULL || type === TYPE_FIRST) {
+        pending = [];
+        pendingCorrupt = false;
+      }
+      pending.push(payload);
+      pendingCorrupt ||= !intact;
+      if (type === TYPE_FULL || type === TYPE_LAST) {
+        if (!pendingCorrupt) batches.push(Buffer.concat(pending));
+        pending = [];
+        pendingCorrupt = false;
+      }
     }
   }
   return { batches, droppedFragments };
-}
-
-function concat(parts: Uint8Array[]): Uint8Array {
-  const total = parts.reduce((sum, part) => sum + part.length, 0);
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const part of parts) {
-    out.set(part, offset);
-    offset += part.length;
-  }
-  return out;
 }
 
 /**
@@ -165,19 +160,13 @@ function batchRecords(batch: Uint8Array): InternalRecord[] {
   return records;
 }
 
-function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
-}
-
 /** Every record for `userKey` in one `.log`, plus what the log lost. */
 export function findInLog(file: Uint8Array, userKey: Uint8Array): LogScan {
   const found: InternalRecord[] = [];
   const { batches, droppedFragments } = readBatches(file);
   for (const batch of batches) {
     for (const record of batchRecords(batch)) {
-      if (sameBytes(record.userKey, userKey)) found.push(record);
+      if (Buffer.compare(record.userKey, userKey) === 0) found.push(record);
     }
   }
   return { records: found, droppedFragments };

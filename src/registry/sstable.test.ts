@@ -1,15 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
+import { localStorageKey } from "./local-storage.js";
 import { findInTable } from "./sstable.js";
 
 const FIXTURES = new URL("./__fixtures__/", import.meta.url).pathname;
 
-const KEY = Buffer.concat([
-  Buffer.from("_paseo://app", "latin1"),
-  Buffer.from([0x00, 0x01]),
-  Buffer.from("@paseo:daemon-registry", "latin1"),
-]);
+const KEY = localStorageKey("paseo://app", "@paseo:daemon-registry");
 
 async function tableBytes(fixture: string): Promise<Buffer> {
   const dir = path.join(FIXTURES, fixture);
@@ -20,22 +17,14 @@ async function tableBytes(fixture: string): Promise<Buffer> {
 
 // Mirrors scripts/make-registry-fixtures.mjs's fillerKey: "0-key-*" sorts
 // before the real registry key, "z-key-*" sorts after it.
-function fillerKey(side: "0" | "z", index: number): Buffer {
-  return Buffer.concat([
-    Buffer.from("_paseo://app", "latin1"),
-    Buffer.from([0x00, 0x01]),
-    Buffer.from(`${side}-key-${String(index).padStart(4, "0")}`, "latin1"),
-  ]);
+function fillerKey(side: "0" | "z", index: number): Uint8Array {
+  return localStorageKey("paseo://app", `${side}-key-${String(index).padStart(4, "0")}`);
 }
 
 // Mirrors scripts/make-registry-fixtures.mjs's STRADDLE_KEY: written many
 // times with large values before compaction, so its run of internal-key
 // versions is split across two data blocks.
-const STRADDLE_KEY = Buffer.concat([
-  Buffer.from("_paseo://app", "latin1"),
-  Buffer.from([0x00, 0x01]),
-  Buffer.from("zz-straddle", "latin1"),
-]);
+const STRADDLE_KEY = localStorageKey("paseo://app", "zz-straddle");
 
 describe("findInTable", () => {
   it("finds the record in a compacted, snappy-compressed table", async () => {

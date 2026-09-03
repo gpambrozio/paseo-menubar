@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
-import { crc32c } from "./binary.js";
+import { crc32c, maskCrc } from "./binary.js";
+import { localStorageKey } from "./local-storage.js";
 import { findInLog } from "./wal.js";
 
 const FIXTURES = new URL("./__fixtures__/", import.meta.url).pathname;
@@ -14,13 +15,12 @@ const FIXTURES = new URL("./__fixtures__/", import.meta.url).pathname;
 // wal.ts — is otherwise untested. These helpers build a synthetic `.log`
 // buffer by hand so the tests below can drive that path directly.
 //
-// Note the mild circularity: `maskCrc` here is the inverse of `unmaskCrc`
-// from binary.js, and both the test and the implementation route through
-// the same `crc32c`. That is acceptable because what these tests pin down
-// is wal.ts's *framing and reassembly* logic — how FIRST/MIDDLE/LAST
-// fragments combine, and what happens when one of them is wrong — not
-// whether crc32c itself is correct. CRC32C correctness is pinned against
-// the standard check vector in binary.test.ts (Task 1).
+// Note the mild circularity: the test and the implementation route through
+// the same `crc32c` and `maskCrc`. That is acceptable because what these
+// tests pin down is wal.ts's *framing and reassembly* logic — how
+// FIRST/MIDDLE/LAST fragments combine, and what happens when one of them is
+// wrong — not whether the checksum itself is correct. CRC32C correctness
+// and the mask round-trip are pinned in binary.test.ts.
 
 const TYPE_FULL = 1;
 const TYPE_FIRST = 2;
@@ -29,13 +29,6 @@ const TYPE_LAST = 4;
 const UNKNOWN_TYPE = 9;
 
 const RECORD_VALUE = 1;
-
-const MASK_DELTA = 0xa282ead8;
-
-function maskCrc(crc: number): number {
-  const rotated = (((crc << 17) | (crc >>> 15)) >>> 0) >>> 0;
-  return (rotated + MASK_DELTA) >>> 0;
-}
 
 function varint(n: number): Buffer {
   const bytes: number[] = [];
@@ -86,11 +79,7 @@ function splitThree(batch: Buffer): [Buffer, Buffer, Buffer] {
   return [batch.subarray(0, third), batch.subarray(third, third * 2), batch.subarray(third * 2)];
 }
 
-const KEY = Buffer.concat([
-  Buffer.from("_paseo://app", "latin1"),
-  Buffer.from([0x00, 0x01]),
-  Buffer.from("@paseo:daemon-registry", "latin1"),
-]);
+const KEY = localStorageKey("paseo://app", "@paseo:daemon-registry");
 
 async function logBytes(fixture: string): Promise<Buffer> {
   const dir = path.join(FIXTURES, fixture);
@@ -186,6 +175,45 @@ describe("findInLog: multi-fragment reassembly", () => {
     expect(Buffer.from(found[0]!.value).toString("latin1")).toBe(otherValue.toString("latin1"));
     // An abandoned FIRST is the normal shape of a log being appended to, not
     // damage, so it must not raise an error row on every read.
+    expect(droppedFragments).toBe(0);
+  });
+
+  it("discards the batch when a fragment inside an earlier block claims more bytes than the block holds", () => {
+    // Block 0: a FIRST, then a MIDDLE whose header declares a length that
+    // runs past the 32KB block boundary. Block 1: a LAST carrying a
+    // well-formed one-record batch for the same key -- a decoy, as above.
+    // LevelDB reports this shape as "bad record length". Skipping the
+    // overlong fragment and carrying on would splice FIRST onto the decoy
+    // and decode the result as an intact batch, with nothing counted.
+    const decoyValue = Buffer.from("decoy-carried-by-the-last-fragment", "latin1");
+    const decoyBatch = makeBatch([makeWriteRecord(key, decoyValue)]);
+    const overlongHeader = Buffer.alloc(7);
+    overlongHeader.writeUInt32LE(0, 0);
+    overlongHeader.writeUInt16LE(0x7fff, 4);
+    overlongHeader.writeUInt8(TYPE_MIDDLE, 6);
+    const block0 = Buffer.concat([physicalRecord(TYPE_FIRST, frag1), overlongHeader]);
+    const log = Buffer.concat([
+      block0,
+      Buffer.alloc(32768 - block0.length),
+      physicalRecord(TYPE_LAST, decoyBatch),
+    ]);
+
+    const { records, droppedFragments } = findInLog(log, key);
+    expect(records).toEqual([]);
+    expect(droppedFragments).toBe(1);
+  });
+
+  it("does not count a record torn at the end of the file as damage", () => {
+    // The same overlong header, but at the tail: a log being appended to
+    // ends like this all the time, and it must not raise an error row.
+    const overlongHeader = Buffer.alloc(7);
+    overlongHeader.writeUInt16LE(0x7fff, 4);
+    overlongHeader.writeUInt8(TYPE_FULL, 6);
+    const otherBatch = makeBatch([makeWriteRecord(key, Buffer.from("v", "latin1"))]);
+    const log = Buffer.concat([physicalRecord(TYPE_FULL, otherBatch), overlongHeader]);
+
+    const { records, droppedFragments } = findInLog(log, key);
+    expect(records).toHaveLength(1);
     expect(droppedFragments).toBe(0);
   });
 

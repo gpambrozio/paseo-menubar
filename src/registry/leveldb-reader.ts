@@ -29,21 +29,32 @@ export interface LevelDbReadResult {
 }
 
 /**
+ * How many times one read may list the directory. Chromium can compact more
+ * than once while we work, so a single retry is not always enough; three
+ * bounds the cost of a directory that will not sit still, and this is a read,
+ * not a poll loop -- the session's own poll comes back regardless.
+ */
+const MAX_SCANS = 3;
+
+/**
  * One pass over the directory: list it, and best-effort read every `.ldb`/
  * `.sst`/`.log` in that listing.
  *
  * Two kinds of failure are tracked separately because they mean different
- * things. A file that disappears between `readdir` and `readFile` almost
- * always means Chromium's compaction wrote its replacement and then unlinked
- * this one — the data migrated, it did not vanish, so `vanishedCount` alone
- * is not evidence anything is wrong. A file that is still there but fails to
- * parse means the bytes are unintelligible, which is exactly the condition
- * the design doc's failure table wants surfaced — so only that case sets
- * `firstParseError`.
+ * things. A file that is gone (`ENOENT`) between `readdir` and `readFile`
+ * means Chromium's compaction wrote its replacement and then unlinked this
+ * one -- the data migrated to a file this listing never saw, so the listing
+ * is stale and `vanishedCount` says so. A file that is still there but cannot
+ * be read or parsed means the bytes are unintelligible or unreachable, which
+ * is exactly the condition the design doc's failure table wants surfaced --
+ * so that case, and only that case, sets `firstParseError`. Any other read
+ * error (`EACCES`, `EIO`, a descriptor limit) is damage, not migration: it
+ * says nothing about where the data went, and treating it as benign is how
+ * "the key is absent" gets reported for a database we never opened.
  *
  * A `.log` that parses but had to discard fragments counts as a parse
- * failure too. Its surviving records are still used — they may be the newest
- * anywhere — but the file is damaged, and the caller has to be able to say so
+ * failure too. Its surviving records are still used -- they may be the newest
+ * anywhere -- but the file is damaged, and the caller has to be able to say so
  * even when some other file produced a winner.
  */
 async function scan(dir: string, userKey: Uint8Array): Promise<ScanResult> {
@@ -68,10 +79,13 @@ async function scan(dir: string, userKey: Uint8Array): Promise<ScanResult> {
     let bytes: Buffer;
     try {
       bytes = await readFile(path.join(dir, name));
-    } catch {
-      // Compacted away between listing and reading. Nothing to recover, and
-      // not a sign the file's contents were ever bad.
-      vanishedCount += 1;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        vanishedCount += 1;
+      } else {
+        parseSkipCount += 1;
+        firstParseError ??= error;
+      }
       continue;
     }
 
@@ -117,7 +131,8 @@ async function scan(dir: string, userKey: Uint8Array): Promise<ScanResult> {
  * files per level. We need exactly one key, and every record carries a
  * sequence number that totally orders it against every other write, so
  * scanning all files and taking the highest sequence is correct by
- * construction and skips the version set entirely.
+ * construction and skips the version set entirely -- provided the scan saw
+ * every live file, which is what the re-listing below is for.
  *
  * "No value" is ambiguous by itself: it means either the key was never
  * written (or was deleted), or a file that could have held it failed to
@@ -135,37 +150,43 @@ async function scan(dir: string, userKey: Uint8Array): Promise<ScanResult> {
  * host over one torn file — and discarding the signal is what let a stale
  * host list, credentials and all, look authoritative.
  *
- * A file that merely vanished between listing and read is handled
- * differently: if that is the only thing that went wrong (no winner, no
- * parse failures, at least one vanished file), the listing was stale, so the
- * scan is retried exactly once with a fresh `readdir`. A second miss falls
- * through to whatever that second scan found, `null` included — this is a
- * bounded retry, not a poll loop.
+ * A file that vanished between listing and read gets the same treatment,
+ * winner or not: compaction moved its records into a file the listing never
+ * included, and that file may hold the newest write -- a `.log` flushed into
+ * a fresh `.ldb` is exactly the case where the surviving, older `.ldb` used
+ * to be returned as current. So any vanish means the listing was stale and
+ * the directory is listed again, up to `MAX_SCANS` times. If it never
+ * settles, a winner is returned with the same "may be out of date" signal a
+ * damaged file carries, and no winner is undetermined rather than absent.
  */
 export async function readLevelDbValue(
   dir: string,
   userKey: Uint8Array,
 ): Promise<LevelDbReadResult> {
   let result = await scan(dir, userKey);
-
-  if (!result.winner && result.parseSkipCount === 0 && result.vanishedCount > 0) {
+  for (let scans = 1; scans < MAX_SCANS && result.vanishedCount > 0; scans++) {
     result = await scan(dir, userKey);
   }
 
   const value = result.winner && !result.winner.isDeletion ? result.winner.value : null;
 
-  if (result.parseSkipCount > 0) {
-    const damage = `Could not read ${result.parseSkipCount} of ${result.relevantCount} LevelDB file(s) in ${dir}`;
-    // No value *and* damage: absence is indistinguishable from a file we
-    // could not read, including when the newest surviving record is a
-    // deletion that an unreadable file may itself have superseded. Throwing
-    // routes this to keep-last-known-good instead of "the key is gone".
+  const damaged = result.parseSkipCount > 0;
+  const unsettled = result.vanishedCount > 0;
+  if (damaged || unsettled) {
+    const detail = damaged
+      ? `Could not read ${result.parseSkipCount} of ${result.relevantCount} LevelDB file(s) in ${dir}`
+      : `${dir} kept changing across ${MAX_SCANS} listings`;
+    // No value *and* trouble: absence is indistinguishable from a file we
+    // could not read or never saw, including when the newest surviving
+    // record is a deletion that such a file may itself have superseded.
+    // Throwing routes this to keep-last-known-good instead of "the key is
+    // gone".
     if (value === null) {
-      throw new Error(`${damage}; the key's value could not be determined`, {
+      throw new Error(`${detail}; the key's value could not be determined`, {
         cause: result.firstParseError,
       });
     }
-    return { value, parseFailure: `${damage}; the host list may be out of date` };
+    return { value, parseFailure: `${detail}; the host list may be out of date` };
   }
 
   return { value, parseFailure: null };

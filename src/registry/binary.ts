@@ -1,5 +1,5 @@
 /**
- * Varint and checksum primitives for LevelDB's on-disk formats.
+ * Varint, checksum, and byte-view primitives for LevelDB's on-disk formats.
  *
  * Deliberately knows nothing about LevelDB: both the SSTable reader and the
  * write-ahead-log reader need these, and keeping them separate is what lets
@@ -10,6 +10,11 @@ export interface VarintResult {
   value: number;
   /** Offset just past the varint, so callers can thread position through. */
   next: number;
+}
+
+/** A DataView over exactly `buf`'s bytes, honouring its offset into a shared ArrayBuffer. */
+export function view(buf: Uint8Array): DataView {
+  return new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
 }
 
 /**
@@ -81,9 +86,17 @@ export function crc32c(buf: Uint8Array): number {
 const MASK_DELTA = 0xa282ead8;
 
 /**
- * Reverses LevelDB's CRC mask. Stored checksums are rotated and offset so that
- * a checksum never appears verbatim in the data it covers.
+ * Applies LevelDB's CRC mask: stored checksums are rotated and offset so that
+ * a checksum never appears verbatim in the data it covers. The readers only
+ * ever unmask; this is exported so the tests that build fixtures by hand
+ * share one definition with `unmaskCrc` instead of each carrying an inverse.
  */
+export function maskCrc(crc: number): number {
+  const rot = ((crc >>> 15) | (crc << 17)) >>> 0;
+  return (rot + MASK_DELTA) >>> 0;
+}
+
+/** Reverses `maskCrc`. */
 export function unmaskCrc(masked: number): number {
   const rot = (masked - MASK_DELTA) >>> 0;
   return ((rot >>> 17) | (rot << 15)) >>> 0;

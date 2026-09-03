@@ -3,7 +3,8 @@ import { mkdtemp, readFile, readdir, writeFile, cp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { readLevelDbValue } from "./leveldb-reader.js";
-import { crc32c, readVarint64 } from "./binary.js";
+import { crc32c, maskCrc, readVarint64 } from "./binary.js";
+import { localStorageKey } from "./local-storage.js";
 
 /**
  * A per-path queue of one-shot `readFile` behaviours: the seam a test uses
@@ -37,21 +38,19 @@ afterEach(() => {
   readFileQueues.clear();
 });
 
-function enoentError(filePath: string): NodeJS.ErrnoException {
-  const error = new Error(
-    `ENOENT: no such file or directory, open '${filePath}'`,
-  ) as NodeJS.ErrnoException;
-  error.code = "ENOENT";
+function fsError(code: string, filePath: string): NodeJS.ErrnoException {
+  const error = new Error(`${code}: open '${filePath}'`) as NodeJS.ErrnoException;
+  error.code = code;
   return error;
+}
+
+function enoentError(filePath: string): NodeJS.ErrnoException {
+  return fsError("ENOENT", filePath);
 }
 
 const FIXTURES = new URL("./__fixtures__/", import.meta.url).pathname;
 
-const KEY = Buffer.concat([
-  Buffer.from("_paseo://app", "latin1"),
-  Buffer.from([0x00, 0x01]),
-  Buffer.from("@paseo:daemon-registry", "latin1"),
-]);
+const KEY = localStorageKey("paseo://app", "@paseo:daemon-registry");
 
 function text(value: Uint8Array | null): string {
   if (!value) throw new Error("expected a value");
@@ -143,14 +142,6 @@ async function copyDir(fixture: string): Promise<string> {
   const dst = await mkdtemp(path.join(os.tmpdir(), "leveldb-reader-copy-"));
   await cp(src, dst, { recursive: true });
   return dst;
-}
-
-// LevelDB's CRC mask constant (see sstable.ts's `unmaskCrc`, which this
-// inverts). Not exported: masking is only ever needed here, to build a test
-// fixture whose checksum stays valid after a deliberate edit.
-const MASK_DELTA = 0xa282ead8;
-function maskCrc(crc: number): number {
-  return (((crc >>> 15) | (crc << 17)) + MASK_DELTA) >>> 0;
 }
 
 /**
@@ -280,28 +271,68 @@ describe("readLevelDbValue", () => {
     );
   });
 
-  it("returns null, not a throw, when the only relevant file vanishes on every attempt", async () => {
+  it("reports the key as undetermined, not absent, when the only relevant file keeps vanishing", async () => {
     const dir = await onlyGoodTable("compacted");
     const target = path.join(dir, await findLdbName(dir));
-    // Persists: a queue of length 1 is reused on every call, so both the
-    // first scan and the retry see the file as gone.
+    // Persists: a queue of length 1 is reused on every call, so every scan
+    // sees the file as gone.
     readFileQueues.set(target, [async () => { throw enoentError(target); }]);
 
-    // A vanished file is not evidence of a bad file, so this must resolve
-    // to "key absent", not reject the way a parse failure does.
-    await expect(readLevelDbValue(dir, KEY)).resolves.toEqual({ value: null, parseFailure: null });
+    // The listing named a file that could hold the key and we never got to
+    // read it. "Absent" would send the tray to zero hosts; the truth is that
+    // the value could not be determined, which keeps the last good set.
+    await expect(readLevelDbValue(dir, KEY)).rejects.toThrow(/could not be determined/);
   });
 
-  it("still returns the good record when a sibling file has merely vanished", async () => {
+  it("returns the good record with a warning when a sibling file keeps vanishing", async () => {
     const dir = await copyDir("superseded");
-    // Make the .ldb (holding the stale value) vanish on every read; the
-    // .log's fresh value must still win, and win without a retry, since a
-    // winner short-circuits before the vanish/retry check runs.
+    // The .ldb (holding the stale value) vanishes on every read; the .log's
+    // fresh value still wins. But a listing that never settles is a listing
+    // we cannot vouch for, so the value comes back flagged.
     const ldbTarget = path.join(dir, await findLdbName(dir));
     readFileQueues.set(ldbTarget, [async () => { throw enoentError(ldbTarget); }]);
 
-    const value = await cleanValue(dir, KEY);
-    expect(value).toContain("fresh");
+    const result = await readLevelDbValue(dir, KEY);
+    expect(text(result.value)).toContain("fresh");
+    expect(result.parseFailure).toMatch(/out of date/);
+  });
+
+  it("lists again when the newer file vanished, instead of returning the older survivor as current", async () => {
+    const dir = await copyDir("superseded");
+    // The .log holds `fresh`; the .ldb holds `stale`. Make the .log vanish on
+    // the first read only -- the shape of a memtable flush that unlinked it
+    // after writing its records to a table the first listing never saw. A
+    // reader that only re-lists when it found *nothing* would hand back
+    // `stale` with no signal, since the .ldb produced a winner.
+    const logTarget = path.join(dir, await findLogName(dir));
+    const goodBytes = await readFile(logTarget);
+    readFileQueues.set(logTarget, [
+      async () => {
+        throw enoentError(logTarget);
+      },
+      async () => goodBytes,
+    ]);
+
+    expect(await cleanValue(dir, KEY)).toContain("fresh");
+  });
+
+  it("treats a read error other than ENOENT as damage, not as a vanished file", async () => {
+    const dir = await onlyGoodTable("compacted");
+    const target = path.join(dir, await findLdbName(dir));
+    readFileQueues.set(target, [async () => { throw fsError("EACCES", target); }]);
+
+    // A file we were refused says nothing about where its data went. Calling
+    // it "vanished" and then "absent" is how a permission problem turned into
+    // an applied empty host set.
+    let caught: unknown;
+    try {
+      await readLevelDbValue(dir, KEY);
+      throw new Error("expected readLevelDbValue to reject");
+    } catch (error) {
+      caught = error;
+    }
+    expect((caught as Error).message).toMatch(/could not be determined/);
+    expect(((caught as Error).cause as NodeJS.ErrnoException).code).toBe("EACCES");
   });
 
   it("finds the record on the retried scan after the first scan saw the file vanish", async () => {

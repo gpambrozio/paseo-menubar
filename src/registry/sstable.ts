@@ -1,5 +1,5 @@
 import { uncompress } from "snappyjs";
-import { crc32c, readVarint32, readVarint64, unmaskCrc } from "./binary.js";
+import { crc32c, readVarint32, readVarint64, unmaskCrc, view } from "./binary.js";
 
 /**
  * One record as LevelDB stores it: a user key, the sequence number that orders
@@ -41,10 +41,6 @@ const BLOCK_TRAILER_LENGTH = 5; // 1 compression byte + 4 checksum bytes
 interface BlockHandle {
   offset: number;
   size: number;
-}
-
-function view(buf: Uint8Array): DataView {
-  return new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
 }
 
 function parseFooter(file: Uint8Array): BlockHandle {
@@ -146,12 +142,6 @@ function splitInternalKey(key: Uint8Array): Omit<InternalRecord, "value"> {
   };
 }
 
-function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
-}
-
 /**
  * Every record for `userKey` in one `.ldb`.
  *
@@ -168,7 +158,7 @@ export function findInTable(file: Uint8Array, userKey: Uint8Array): InternalReco
     // An index entry's key is a separator >= every key in its block, so a
     // block can hold our key only if its separator is not below it.
     const separator = splitInternalKey(indexEntry.key).userKey;
-    const cmp = compareBytes(separator, userKey);
+    const cmp = Buffer.compare(separator, userKey);
     if (cmp < 0) continue;
 
     const offset = readVarint64(indexEntry.value, 0);
@@ -177,7 +167,7 @@ export function findInTable(file: Uint8Array, userKey: Uint8Array): InternalReco
 
     for (const entry of blockEntries(dataBlock)) {
       const parsed = splitInternalKey(entry.key);
-      if (!sameBytes(parsed.userKey, userKey)) continue;
+      if (Buffer.compare(parsed.userKey, userKey) !== 0) continue;
       found.push({ ...parsed, value: entry.value });
     }
 
@@ -188,12 +178,4 @@ export function findInTable(file: Uint8Array, userKey: Uint8Array): InternalReco
     if (cmp > 0) break;
   }
   return found;
-}
-
-function compareBytes(a: Uint8Array, b: Uint8Array): number {
-  const shared = Math.min(a.length, b.length);
-  for (let i = 0; i < shared; i++) {
-    if (a[i]! !== b[i]!) return a[i]! < b[i]! ? -1 : 1;
-  }
-  return a.length === b.length ? 0 : a.length < b.length ? -1 : 1;
 }

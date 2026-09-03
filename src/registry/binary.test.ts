@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { crc32c, readVarint32, readVarint64, unmaskCrc } from "./binary.js";
+import { crc32c, maskCrc, readVarint32, readVarint64, unmaskCrc } from "./binary.js";
 
 describe("readVarint32", () => {
   it("reads a single-byte value and reports the next offset", () => {
@@ -38,7 +38,14 @@ describe("crc32c", () => {
 
   it("round-trips through LevelDB's mask", () => {
     const crc = crc32c(new TextEncoder().encode("paseo"));
-    const masked = (((crc >>> 15) | (crc << 17)) + 0xa282ead8) >>> 0;
-    expect(unmaskCrc(masked)).toBe(crc);
+    expect(unmaskCrc(maskCrc(crc))).toBe(crc);
+  });
+
+  it("masks the way LevelDB does, not merely in a way unmaskCrc undoes", () => {
+    // LevelDB: ((crc >> 15) | (crc << 17)) + 0xa282ead8. Pinned as an
+    // independent expression so a matching mistake in both directions
+    // cannot pass the round-trip above.
+    const crc = 0x12345678;
+    expect(maskCrc(crc)).toBe((((crc >>> 15) | (crc << 17)) + 0xa282ead8) >>> 0);
   });
 });
