@@ -4,13 +4,25 @@ import { decodeLocalStorageValue, localStorageKey } from "./local-storage.js";
 describe("localStorageKey", () => {
   it("frames the key the way Chromium stores it", () => {
     const key = localStorageKey("paseo://app", "@paseo:daemon-registry");
-    // The separator is two control bytes, 0x00 0x01 -- not printable, so it
-    // is spelled out rather than embedded in a string literal.
+    // 0x00 terminates the origin; 0x01 is the key's own Latin1 encoding tag,
+    // the same tag a value carries. Neither is printable, so they are spelled
+    // out rather than embedded in a string literal.
     expect(Buffer.from(key)).toEqual(
       Buffer.concat([
         Buffer.from("_paseo://app", "latin1"),
         Buffer.from([0x00, 0x01]),
         Buffer.from("@paseo:daemon-registry", "latin1"),
+      ]),
+    );
+  });
+
+  it("tags a key that does not fit in Latin1 as UTF-16LE, as Chromium does", () => {
+    const key = localStorageKey("paseo://app", "☕");
+    expect(Buffer.from(key)).toEqual(
+      Buffer.concat([
+        Buffer.from("_paseo://app", "latin1"),
+        Buffer.from([0x00, 0x00]),
+        Buffer.from("☕", "utf16le"),
       ]),
     );
   });

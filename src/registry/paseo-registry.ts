@@ -3,6 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 import { DirectTcpHostConnectionSchema } from "@getpaseo/protocol/host-connection-schema";
 import type { HostEntry } from "../config/host-entry.js";
+import { errorText } from "../error-text.js";
 import { decodeLocalStorageValue, localStorageKey } from "./local-storage.js";
 import { readLevelDbValue } from "./leveldb-reader.js";
 
@@ -19,48 +20,75 @@ import { readLevelDbValue } from "./leveldb-reader.js";
 
 const ORIGIN = "paseo://app";
 const REGISTRY_KEY = "@paseo:daemon-registry";
+
+/**
+ * The shipped app's support directory. A development build of the desktop
+ * package is deliberately not probed: it loads its window from the dev
+ * server rather than `paseo://app`, so its localStorage is keyed under that
+ * origin and the record this module looks up would never be found there --
+ * a probe that succeeds would only turn "not installed" into a misleading
+ * "no hosts yet".
+ */
+const APP_DIR = "Paseo";
 const LOCAL_STORAGE_SUBPATH = path.join("Local Storage", "leveldb");
 
 /**
- * Candidate application-support directory names, in priority order. The
- * shipped app is `Paseo`; a development build of the desktop package uses the
- * scoped package name instead.
- */
-const APP_DIR_CANDIDATES = ["Paseo", "@getpaseo/desktop"];
-
-/**
- * Only the two connection shapes the tray can actually dial. `directSocket`
- * and `directPipe` are parsed so a host carrying one is recognised and
- * reported, rather than silently vanishing.
+ * The two connection shapes the tray can actually dial, the two it knows it
+ * cannot, and a catch-all for whatever the Paseo app adds next.
  *
  * `directTcp` reuses the published `DirectTcpHostConnectionSchema` rather
  * than redefining the shape locally — the same schema `src/config/host-entry.ts`
  * uses for the app's own config — so a protocol change surfaces as a type
  * error here instead of silently drifting. `relay`, `directSocket`, and
  * `directPipe` have no published equivalent in this SDK version, so those
- * stay hand-rolled.
+ * stay hand-rolled. `id` is optional on every shape because the app's own
+ * on-disk schema makes it optional and regenerates it on load; the tray only
+ * needs it to honour `preferredConnectionId`.
+ *
+ * The catch-all matters because the desktop app is not version-pinned: it
+ * writes this database on its own release cadence, and a connection kind the
+ * tray has never heard of must reduce to "this host has no connection the
+ * menu bar can use", not to a rejected registry that takes every other host
+ * down with it. A *known* kind with a malformed shape is still rejected, at
+ * the profile level, so the row can say what was wrong.
  */
-const RegistryConnectionSchema = z.discriminatedUnion("type", [
-  DirectTcpHostConnectionSchema,
+const KnownConnectionSchema = z.discriminatedUnion("type", [
+  DirectTcpHostConnectionSchema.extend({ id: z.string().optional() }),
   z.object({
-    id: z.string(),
+    id: z.string().optional(),
     type: z.literal("relay"),
     relayEndpoint: z.string(),
     useTls: z.boolean().optional(),
     daemonPublicKeyB64: z.string(),
   }),
-  z.object({ id: z.string(), type: z.literal("directSocket"), path: z.string() }),
-  z.object({ id: z.string(), type: z.literal("directPipe"), path: z.string() }),
+  z.object({ id: z.string().optional(), type: z.literal("directSocket"), path: z.string() }),
+  z.object({ id: z.string().optional(), type: z.literal("directPipe"), path: z.string() }),
 ]);
+const KNOWN_CONNECTION_TYPES = new Set(["directTcp", "relay", "directSocket", "directPipe"]);
+const UnknownConnectionSchema = z.object({
+  id: z.string().optional(),
+  // `abort` matters: a non-aborting refine failure makes zod report this
+  // branch alone as the union's verdict, hiding the known branch's real
+  // complaint ("endpoint: required") behind a bare "Invalid input".
+  type: z.string().refine((type) => !KNOWN_CONNECTION_TYPES.has(type), {
+    message: "known connection types must match their own schema",
+    abort: true,
+  }),
+});
+const RegistryConnectionSchema = z.union([KnownConnectionSchema, UnknownConnectionSchema]);
 
+/**
+ * One stored profile. `serverId` is trimmed because the app trims it on
+ * load, and the tray sends it verbatim as a relay session id; `label` admits
+ * `null` because the app's schema does, and an absent, null, or empty label
+ * all mean "no name" downstream.
+ */
 const HostProfileSchema = z.object({
-  serverId: z.string().min(1),
-  label: z.string().optional(),
+  serverId: z.string().trim().min(1),
+  label: z.string().nullable().optional(),
   connections: z.array(RegistryConnectionSchema),
   preferredConnectionId: z.string().nullable().optional(),
 });
-
-const RegistrySchema = z.array(HostProfileSchema);
 
 export interface RegistrySnapshot {
   hosts: HostEntry[];
@@ -76,10 +104,10 @@ export interface RegistrySnapshot {
 }
 
 type RegistryConnection = z.infer<typeof RegistryConnectionSchema>;
+type DialableConnection = Extract<RegistryConnection, { type: "directTcp" | "relay" }>;
+type HostProfile = z.infer<typeof HostProfileSchema>;
 
-function isSupported(
-  connection: RegistryConnection,
-): connection is Extract<RegistryConnection, { type: "directTcp" | "relay" }> {
+function isDialable(connection: RegistryConnection): connection is DialableConnection {
   return connection.type === "directTcp" || connection.type === "relay";
 }
 
@@ -89,27 +117,65 @@ function isSupported(
  * the tray cannot use (a unix socket) while still carrying a usable relay, and
  * dropping that host would lose a working connection for no reason.
  */
-function chooseConnection(
-  profile: z.infer<typeof HostProfileSchema>,
-): Extract<RegistryConnection, { type: "directTcp" | "relay" }> | null {
-  const supported = profile.connections.filter(isSupported);
+function chooseConnection(profile: HostProfile): DialableConnection | null {
+  const supported = profile.connections.filter(isDialable);
   const preferred = supported.find((connection) => connection.id === profile.preferredConnectionId);
   return preferred ?? supported[0] ?? null;
 }
 
+/**
+ * The best name for a profile that may not have parsed: its label if it has
+ * one, its serverId if it has one, else its position. Empty strings do not
+ * count as names, or the failure row would open with a bare dash.
+ */
+function describeProfile(candidate: unknown, index: number): string {
+  if (typeof candidate === "object" && candidate !== null) {
+    const { label, serverId } = candidate as { label?: unknown; serverId?: unknown };
+    if (typeof label === "string" && label.trim() !== "") return label;
+    if (typeof serverId === "string" && serverId.trim() !== "") return serverId;
+  }
+  return `profile ${index + 1}`;
+}
+
+/**
+ * Flattens a profile's issues into "path: message" lines. A connection that
+ * matches no branch of the union reports as one `invalid_union` issue whose
+ * detail sits a level down, and that detail -- "endpoint: required" -- is
+ * the part the row needs.
+ */
+function describeIssues(issues: z.core.$ZodIssue[]): string[] {
+  return issues.flatMap((issue) => {
+    if (issue.code === "invalid_union") return issue.errors.flatMap(describeIssues);
+    return [`${issue.path.map(String).join(".") || "profile"}: ${issue.message}`];
+  });
+}
+
 export function hostEntriesFromRegistry(json: string): RegistrySnapshot {
   const parsed: unknown = JSON.parse(json);
-  const profiles = RegistrySchema.parse(parsed);
+  // Anything but an array means the record is not the registry we know how
+  // to read at all, so that is a whole-read failure. One profile that does
+  // not parse is not: every other host is still exactly as usable as before,
+  // and losing them over a sibling is the silent cap this project forbids.
+  const candidates = z.array(z.unknown()).parse(parsed);
 
   const hosts: HostEntry[] = [];
   const failures: string[] = [];
   const seenServerIds = new Set<string>();
 
-  for (const profile of profiles) {
+  for (const [index, candidate] of candidates.entries()) {
+    const name = describeProfile(candidate, index);
+    const result = HostProfileSchema.safeParse(candidate);
+    if (!result.success) {
+      failures.push(`${name} — could not be read (${describeIssues(result.error.issues).join("; ")})`);
+      continue;
+    }
+    const profile = result.data;
+
     const connection = chooseConnection(profile);
-    const name = profile.label ?? profile.serverId;
     if (!connection) {
-      failures.push(`${name} — no connection the menu bar can use`);
+      const kinds = profile.connections.map((entry) => entry.type);
+      const has = kinds.length > 0 ? ` (has: ${kinds.join(", ")})` : "";
+      failures.push(`${name} — no connection the menu bar can use${has}`);
       continue;
     }
 
@@ -131,6 +197,9 @@ export function hostEntriesFromRegistry(json: string): RegistrySnapshot {
     // duplicate-id check rejects outright. serverId is unique per daemon and
     // stable across restarts, which also keeps the derived clientId stable so
     // the daemon resumes sessions instead of starting new ones.
+    //
+    // `HostEntrySchema` requires a label to be non-empty when present, so an
+    // empty or null one is left out rather than carried through.
     const base = { id: profile.serverId, ...(profile.label ? { label: profile.label } : {}) };
 
     if (connection.type === "directTcp") {
@@ -165,24 +234,28 @@ export function hostEntriesFromRegistry(json: string): RegistrySnapshot {
 }
 
 /**
- * The leveldb directory of whichever Paseo build is installed.
+ * The leveldb directory of the installed Paseo app.
  *
- * Throws when none is present: that is a distinct, actionable state ("the app
+ * Throws when it is absent: that is a distinct, actionable state ("the app
  * is not installed") rather than an empty registry, and the tray says so.
+ * Any other reason the directory cannot be reached -- a permission change, a
+ * file sitting where the directory should be -- is a different problem with
+ * a different fix, so it is reported with its own error rather than folded
+ * into "not found".
  */
 export async function registryLevelDbDir(appSupportDir: string): Promise<string> {
-  const probed: string[] = [];
-  for (const candidate of APP_DIR_CANDIDATES) {
-    const dir = path.join(appSupportDir, candidate, LOCAL_STORAGE_SUBPATH);
-    probed.push(dir);
-    try {
-      await access(dir);
-      return dir;
-    } catch {
-      continue;
+  const dir = path.join(appSupportDir, APP_DIR, LOCAL_STORAGE_SUBPATH);
+  try {
+    await access(dir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error(`Paseo desktop app not found.\n\nLooked in:\n${dir}`);
     }
+    throw new Error(`Could not open the Paseo app's storage at ${dir}: ${errorText(error)}`, {
+      cause: error,
+    });
   }
-  throw new Error(`Paseo desktop app not found.\n\nLooked in:\n${probed.join("\n")}`);
+  return dir;
 }
 
 /** `null` means the app is installed but has never stored a registry. */

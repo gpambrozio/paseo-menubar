@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { hostEntriesFromRegistry, readRegistry, registryLevelDbDir } from "./paseo-registry.js";
@@ -189,6 +189,80 @@ describe("hostEntriesFromRegistry", () => {
     expect(hosts[0]).toMatchObject({ useTls: true, password: "hunter2" });
   });
 
+  it("keeps every other host when one profile carries a connection type the tray has never seen", () => {
+    const { hosts, failures } = hostEntriesFromRegistry(
+      JSON.stringify([
+        profile({ serverId: "srv_known" }),
+        profile({
+          serverId: "srv_future",
+          label: "Future",
+          connections: [{ id: "ws:1", type: "directWs", url: "ws://x" }],
+          preferredConnectionId: "ws:1",
+        }),
+      ]),
+    );
+    // The desktop app is not version-pinned: a connection kind it adds
+    // tomorrow must cost that one host, named, and nothing else. Rejecting
+    // the whole registry here took every host down over a sibling.
+    expect(hosts.map((host) => host.id)).toEqual(["srv_known"]);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toContain("Future");
+    expect(failures[0]).toContain("directWs");
+  });
+
+  it("names a profile that does not parse and keeps the rest", () => {
+    const { hosts, failures } = hostEntriesFromRegistry(
+      JSON.stringify([
+        profile({ serverId: "srv_ok" }),
+        profile({ serverId: "srv_bad", label: "Broken", connections: [{ id: "d", type: "directTcp" }] }),
+        { nothing: true },
+      ]),
+    );
+    expect(hosts.map((host) => host.id)).toEqual(["srv_ok"]);
+    expect(failures).toHaveLength(2);
+    // A known kind with a malformed shape is still a schema failure, but at
+    // the profile level, and it says what was missing.
+    expect(failures[0]).toContain("Broken");
+    expect(failures[0]).toMatch(/endpoint/);
+    // With nothing to name it by, the row falls back to the position.
+    expect(failures[1]).toContain("profile 3");
+  });
+
+  it("trims a serverId the way the Paseo app does before using it as the host id", () => {
+    const { hosts } = hostEntriesFromRegistry(JSON.stringify([profile({ serverId: "  srv_pad  " })]));
+    // For a relay host this string is sent as the session id, so a stray
+    // space is a host that never connects.
+    expect(hosts[0]!.id).toBe("srv_pad");
+  });
+
+  it("accepts a connection without an id, as the app's own schema does", () => {
+    const { hosts, failures } = hostEntriesFromRegistry(
+      JSON.stringify([
+        profile({ connections: [{ type: "directTcp", endpoint: "10.0.0.9:6767" }], preferredConnectionId: null }),
+      ]),
+    );
+    expect(failures).toEqual([]);
+    expect(hosts[0]).toMatchObject({ type: "directTcp", endpoint: "10.0.0.9:6767" });
+  });
+
+  it("treats a null or empty label as no label", () => {
+    const { hosts, failures } = hostEntriesFromRegistry(
+      JSON.stringify([
+        profile({ serverId: "srv_null", label: null }),
+        profile({ serverId: "srv_empty", label: "" }),
+        profile({
+          serverId: "srv_empty_pipe",
+          label: "",
+          connections: [{ id: "pipe:1", type: "directPipe", path: "/tmp/sock" }],
+        }),
+      ]),
+    );
+    // `HostEntrySchema` requires a label to be non-empty when present, and
+    // an empty name would open a failure row with a bare dash.
+    expect(hosts.map((host) => host.label)).toEqual([undefined, undefined]);
+    expect(failures[0]).toMatch(/^srv_empty_pipe /);
+  });
+
   it("throws on JSON that is not an array of profiles", () => {
     expect(() => hostEntriesFromRegistry('{"nope":true}')).toThrow();
   });
@@ -206,29 +280,30 @@ describe("registryLevelDbDir", () => {
     expect(await registryLevelDbDir(appSupportDir)).toBe(expected);
   });
 
-  it("falls back to @getpaseo/desktop when only that one exists", async () => {
+  it("does not probe a development build's directory, whose storage is keyed under another origin", async () => {
     const appSupportDir = await tempDir();
-    const expected = await seedEmptyLevelDbDir(appSupportDir, "@getpaseo/desktop");
-
-    expect(await registryLevelDbDir(appSupportDir)).toBe(expected);
-  });
-
-  it("prefers Paseo when both exist", async () => {
-    const appSupportDir = await tempDir();
-    const expected = await seedEmptyLevelDbDir(appSupportDir, "Paseo");
     await seedEmptyLevelDbDir(appSupportDir, "@getpaseo/desktop");
 
-    expect(await registryLevelDbDir(appSupportDir)).toBe(expected);
+    await expect(registryLevelDbDir(appSupportDir)).rejects.toThrow(/not found/);
   });
 
-  it("throws naming both probed paths when neither exists", async () => {
+  it("throws naming the probed path when it does not exist", async () => {
     const appSupportDir = await tempDir();
     const paseoPath = leveldbPath(appSupportDir, "Paseo");
-    const desktopPath = leveldbPath(appSupportDir, "@getpaseo/desktop");
+
+    await expect(registryLevelDbDir(appSupportDir)).rejects.toThrow(paseoPath);
+  });
+
+  it("reports a directory it cannot reach as its own problem, not as the app being absent", async () => {
+    const appSupportDir = await tempDir();
+    // A regular file where the `Paseo` directory should be: `access` fails
+    // with ENOTDIR, not ENOENT. Telling the user to install Paseo would be
+    // wrong; the path and the real error are what they need.
+    await writeFile(path.join(appSupportDir, "Paseo"), "not a directory");
 
     await expect(registryLevelDbDir(appSupportDir)).rejects.toSatisfy((error: unknown) => {
       const message = (error as Error).message;
-      return message.includes(paseoPath) && message.includes(desktopPath);
+      return !message.includes("not found") && message.includes("ENOTDIR");
     });
   });
 });
