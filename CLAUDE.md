@@ -14,13 +14,14 @@ upstream change will land.
 
 ## The spec is the authority
 
-`docs/superpowers/` holds three documents. They are not equals:
+`docs/superpowers/` holds four documents. They are not equals:
 
 | Document | Standing |
 | --- | --- |
 | `2026-08-16-standalone-menubar-app-design.md` | **Binding.** Settles any disagreement. |
 | `2026-08-19-registry-sync-design.md` | **Binding.** Supersedes the parts of the doc above that describe `config.json` as the source of hosts and clipboard pairing as the way to add one. |
 | `2026-08-16-paseo-icon-implementation-plan.md` | Historical. Contains known defects. |
+| `plans/2026-08-19-registry-sync.md` | Historical. Written before the code; review changed the reader's retry rule, the registry parser's failure isolation, and the watcher's seam after it was written. |
 
 Read the design docs before non-trivial work. Do **not** implement from the plan: it was
 written before the code and review caught four spec requirements it never mentioned, a
@@ -95,13 +96,20 @@ injection, and is tested without an Electron harness.
   Chromium writes, so every block's CRC32C is verified before it is parsed and
   an unreadable file is skipped rather than failing the whole read. Removing a
   checksum check to "make it work" converts a torn read into silently wrong
-  credentials.
+  credentials. A file that is gone (`ENOENT`) by the time it is read means the
+  listing was stale and the directory is listed again, winner or not; any other
+  read error is damage. Both distinctions were bugs once.
+- **One bad profile never costs another host.** The registry is parsed one
+  profile at a time and a profile the tray cannot use is named in the error
+  row; only a record that is not an array at all fails the whole read. The
+  desktop app is not version-pinned, so a connection type it adds tomorrow has
+  to reduce to "this host has no usable connection", not to zero hosts.
 
 ## Working here
 
 ```bash
 SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm install   # Homebrew libvips breaks sharp's prebuild
-npx vitest run                              # 238 tests, 17 files
+npx vitest run                              # 256 tests, 17 files
 npm run typecheck
 npm run fixtures:registry                   # regenerate LevelDB test fixtures
 ```

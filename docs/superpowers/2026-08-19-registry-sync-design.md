@@ -165,8 +165,16 @@ Per `HostProfile`:
   base url. The built config is then parsed through `AppConfigSchema` before it reaches
   the fleet, which is what `host-fleet.ts`'s duplicate-id invariant is written against.
 
-Path discovery probes `Paseo` then `@getpaseo/desktop` under Application Support, so a
-development build of the desktop app still works.
+Path discovery probes `Paseo` under Application Support only. A development build of the
+desktop package is not probed: it loads its window from the dev server rather than
+`paseo://app`, so its localStorage is keyed under that origin and the record above would
+never be found there — a probe that succeeded would only turn "not installed" into a
+misleading "no hosts yet".
+
+A profile the tray cannot parse — an unknown connection type, a malformed known one — is
+dropped and named in the error row like a host with no usable connection. Only a record
+that is not an array at all fails the whole read. The desktop app is not version-pinned,
+so one profile from a newer app must never cost the hosts beside it.
 
 ## Refresh
 
