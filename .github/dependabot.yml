@@ -10,10 +10,30 @@ updates:
       # parse messages from new daemons, and that guarantee is what makes the
       # exact pin safe; a Dependabot bump would quietly void the reasoning. See
       # CLAUDE.md. Moving these forward is a deliberate act, not a routine one.
+      #
+      # `ignore` applies to version updates only, so a real CVE in the pinned
+      # SDK still opens a pull request.
       - dependency-name: "@getpaseo/client"
       - dependency-name: "@getpaseo/protocol"
       - dependency-name: "@getpaseo/server"
+    # Two groups because `applies-to` defaults to version-updates: without the
+    # second one, security updates keep arriving one pull request per alert,
+    # which is what enabling Dependabot on this repo produced on day one.
+    groups:
+      npm-version-updates:
+        applies-to: version-updates
+        patterns: ["*"]
+      npm-security-updates:
+        applies-to: security-updates
+        patterns: ["*"]
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: weekly
+    groups:
+      actions-version-updates:
+        applies-to: version-updates
+        patterns: ["*"]
+      actions-security-updates:
+        applies-to: security-updates
+        patterns: ["*"]
