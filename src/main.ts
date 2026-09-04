@@ -1,11 +1,11 @@
-import { app, clipboard, dialog, shell } from "electron";
+import { app, dialog, shell } from "electron";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { watch } from "node:fs";
 import { HostStore } from "./daemon/host-store.js";
 import { createHostFleet } from "./daemon/host-fleet.js";
-import { configPath, watchConfig } from "./config/host-config.js";
-import { createConfigSession } from "./config/config-session.js";
-import { hostEntryFromPairingUrl } from "./config/pairing.js";
+import { createRegistrySession } from "./registry/registry-session.js";
+import { createRegistryWatcher, isRegistryFileEvent } from "./registry/registry-watcher.js";
+import { readRegistry, registryLevelDbDir } from "./registry/paseo-registry.js";
 import { defaultDesktopAppInstalled, openApp, openWorkspace } from "./launch/open-paseo.js";
 import { createTrayPresenter, type TrayPresenter } from "./tray/tray-presenter.js";
 import type { TrayWorkspaceRow } from "./tray/view-model.js";
@@ -39,61 +39,49 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady()
     .then(async () => {
       app.dock?.hide();
-      const configDir = app.getPath("userData");
+      const appSupportDir = app.getPath("appData");
 
       // `session` is reached only from callbacks, all of which run after both
       // consts are initialized: the fleet reports its entry failures to the
-      // session, and the session hands loaded configs back to the fleet.
+      // session, and the session hands loaded host sets back to the fleet.
       const fleet = createHostFleet({
         store,
         onEntryFailures: (failures) => session.noteEntryFailures(failures),
       });
-      const session = createConfigSession({
-        configDir,
-        onConfigError: (message) => store.setConfigError(message),
-        applyConfig: (config) => fleet.apply(config),
+
+      /**
+       * Watches the Paseo app's leveldb directory. Chromium rewrites it
+       * constantly for keys we do not care about, so this only signals; the
+       * session debounces and decides whether anything actually changed.
+       *
+       * The directory can be absent (Paseo not installed) or vanish (the app
+       * is uninstalled while we run), and the watch itself can die. All the
+       * deciding lives in `createRegistryWatcher` and `createRegistrySession`;
+       * this supplies `fs.watch` and the one rule that cannot be expressed
+       * there — an FSWatcher 'error' event with no listener takes the process
+       * down.
+       */
+      const registryWatcher = createRegistryWatcher({
+        resolveDir: () => registryLevelDbDir(appSupportDir),
+        open: (dir, { onChange, onError }) => {
+          const watcher = watch(dir, (_event, filename) => {
+            if (isRegistryFileEvent(filename)) onChange();
+          });
+          watcher.on("error", () => {
+            watcher.close();
+            onError();
+          });
+          return () => watcher.close();
+        },
       });
 
-      async function addHostFromClipboard(): Promise<void> {
-        const text = clipboard.readText();
-        let entry;
-        try {
-          entry = hostEntryFromPairingUrl(text, { id: randomUUID() });
-        } catch (error) {
-          dialog.showErrorBox(
-            "Paseo Icon",
-            `That pairing link is malformed.\n\n${errorText(error)}`,
-          );
-          return;
-        }
-        if (!entry) {
-          dialog.showErrorBox(
-            "Paseo Icon",
-            "No pairing link on the clipboard.\n\nRun `paseo daemon pair` and copy the link it prints.",
-          );
-          return;
-        }
-
-        // Reading and writing the config can both fail on things the user did
-        // not do here -- an unparseable config.json, a read-only config
-        // directory -- and this runs from a menu click, so an escaping
-        // rejection would kill the process rather than surface anywhere.
-        try {
-          await session.addHost(entry);
-        } catch (error) {
-          dialog.showErrorBox(
-            "Paseo Icon — could not add host",
-            `${configPath(configDir)}\n\n${errorText(error)}`,
-          );
-          return;
-        }
-        // `entry.label` is absent unless the user typed one -- pairing no
-        // longer bakes the serverId in, so this dialog needs its own
-        // fallback. `entry` is always the "relay" branch here, the only
-        // shape `hostEntryFromPairingUrl` produces.
-        const addedName = entry.label ?? (entry.type === "relay" ? entry.offer.serverId : entry.id);
-        await dialog.showMessageBox({ message: `Added host "${addedName}".` });
-      }
+      const session = createRegistrySession({
+        readRegistry: () => readRegistry(appSupportDir),
+        watch: (onChange) => registryWatcher.watch(onChange),
+        afterRead: () => registryWatcher.ensureAttached(),
+        applyConfig: (config) => fleet.apply(config),
+        onConfigError: (message) => store.setConfigError(message),
+      });
 
       function handleOpenWorkspace(row: TrayWorkspaceRow): void {
         if (!row.serverId) return;
@@ -129,11 +117,6 @@ if (!app.requestSingleInstanceLock()) {
               void fleet
                 .retry(hostId)
                 .catch((error) => showError("Paseo Icon — could not reconnect", error)),
-            onAddHostFromClipboard: () =>
-              void addHostFromClipboard().catch((error) =>
-                showError("Paseo Icon — could not add host", error),
-              ),
-            onEditConfig: () => void shell.openPath(configPath(configDir)),
             onToggleLoginItem: (enabled) => app.setLoginItemSettings({ openAtLogin: enabled }),
             onQuit: () => app.quit(),
           },
@@ -147,26 +130,13 @@ if (!app.requestSingleInstanceLock()) {
         return;
       }
 
-      const stopWatching = watchConfig(configDir, () =>
-        void session.reload().catch((error) =>
-          showError("Paseo Icon — configuration error", error),
-        ),
-      );
-
       app.on("before-quit", () => {
-        stopWatching();
+        session.stop();
         presenter.dispose();
         fleet.closeAll();
       });
 
-      try {
-        await session.start();
-      } catch (error) {
-        // Connecting to configured hosts failed. The tray is already up and
-        // keeps running -- a tray showing zero connected hosts is the
-        // correct display for this state, not a reason to crash.
-        dialog.showErrorBox("Paseo Icon — configuration error", errorText(error));
-      }
+      await session.start();
     })
     .catch((error) => {
       // Safety net: every stage above already catches its own failures, but

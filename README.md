@@ -45,27 +45,27 @@ Builds are Apple Silicon only and need macOS 12 or later. The app and the disk i
 are both signed and notarized, so Gatekeeper opens it without a right-click detour.
 
 To remove it, `brew uninstall --cask paseo-menubar` — or `--zap` instead of
-`--cask` to take the configuration with it, since `config.json` holds the TCP
-passwords and relay keys for every host you added.
+`--cask` to take its own preferences with it. Paseo Icon stores no host
+credentials of its own.
 
 ## Requirements
 
-Paseo Icon needs a running Paseo daemon to talk to. It does not run agents
-itself — it is a status indicator and launcher for a daemon you already have
-running.
+Paseo Icon needs the [Paseo desktop app](https://paseo.sh) installed and at
+least one host paired in it. It does not run agents itself — it is a status
+indicator and launcher for daemons the desktop app already knows about.
 
-## First run
+## Hosts
 
-On first launch, Paseo Icon adopts `127.0.0.1:6767` automatically. If a
-daemon is already running on this machine, there is nothing to configure.
+There is nothing to configure. Paseo Icon reads the host list straight out of
+the Paseo desktop app's own storage, so it shows exactly the hosts the app's
+sidebar shows, with the credentials the app already holds. Pair a host in the
+Paseo app and it appears in the menu bar within a moment; remove it there and
+it goes away.
 
-## Adding a remote host
-
-To watch a daemon on another machine:
-
-1. On that machine, run `paseo daemon pair` and copy the link it prints.
-2. On this machine, open the tray menu and choose **Add host from
-   clipboard…**.
+If the tray shows **No hosts yet**, the desktop app has no hosts paired. If it
+shows a configuration error naming the Paseo app, the app is not installed or
+its storage could not be read; the row opens the app, which is where every
+one of those is fixed.
 
 ## Development
 

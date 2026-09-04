@@ -20,8 +20,6 @@ export interface MenuHandlers {
   onOpenApp: () => void;
   /** Rebuilds one host's connection after its auth was fixed on the daemon. */
   onRetryHost: (hostId: string) => void;
-  onAddHostFromClipboard: () => void;
-  onEditConfig: () => void;
   onToggleLoginItem: (enabled: boolean) => void;
   onQuit: () => void;
 }
@@ -76,12 +74,12 @@ export function buildMenuTemplate(
   const items: MenuItemConstructorOptions[] = [];
 
   if (model.configError) {
-    // First row, and clickable: the fix is in the file, so the row opens it.
+    // The fix for every one of these is in the Paseo app, so the row opens it.
     items.push(
       {
         label: "Configuration error",
         toolTip: model.configError,
-        click: () => handlers.onEditConfig(),
+        click: () => handlers.onOpenApp(),
       },
       { type: "separator" },
     );
@@ -129,8 +127,6 @@ export function buildMenuTemplate(
   items.push(
     { type: "separator" },
     { label: "Open Paseo", click: () => handlers.onOpenApp() },
-    { label: "Add host from clipboard…", click: () => handlers.onAddHostFromClipboard() },
-    { label: "Edit configuration…", click: () => handlers.onEditConfig() },
     {
       label: "Start at login",
       type: "checkbox",

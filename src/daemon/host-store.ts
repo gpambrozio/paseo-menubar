@@ -32,12 +32,12 @@ export type WorkspaceUpdate =
 export interface HostSnapshot {
   hostId: string;
   /**
-   * The user's explicit name for this host, from `config.json`. Undefined
-   * when the entry has none — the common case for a paired host, now that
-   * pairing no longer invents one. This is the raw config value, not the
-   * resolved display name: see `resolveHostName` in `src/tray/view-model.ts`
-   * for the precedence that turns this, `hostname`, `serverId`, and
-   * `endpointHint` into what the tray actually shows.
+   * The user's explicit name for this host, from the Paseo app's registry.
+   * Undefined when the entry has none — the common case for a paired host.
+   * This is the raw registry value, not the resolved display name: see
+   * `resolveHostName` in `src/tray/view-model.ts` for the precedence that
+   * turns this, `hostname`, `serverId`, and `endpointHint` into what the
+   * tray actually shows.
    */
   label: string | undefined;
   /** The daemon's own hostname, from the live `server_info` message. Null before one arrives, or on a daemon old enough not to send it. */

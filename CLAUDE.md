@@ -14,14 +14,16 @@ upstream change will land.
 
 ## The spec is the authority
 
-`docs/superpowers/` holds two documents. They are not equals:
+`docs/superpowers/` holds four documents. They are not equals:
 
 | Document | Standing |
 | --- | --- |
 | `2026-08-16-standalone-menubar-app-design.md` | **Binding.** Settles any disagreement. |
+| `2026-08-19-registry-sync-design.md` | **Binding.** Supersedes the parts of the doc above that describe `config.json` as the source of hosts and clipboard pairing as the way to add one. |
 | `2026-08-16-paseo-icon-implementation-plan.md` | Historical. Contains known defects. |
+| `plans/2026-08-19-registry-sync.md` | Historical. Written before the code; review changed the reader's retry rule, the registry parser's failure isolation, and the watcher's seam after it was written. |
 
-Read the design doc before non-trivial work. Do **not** implement from the plan: it was
+Read the design docs before non-trivial work. Do **not** implement from the plan: it was
 written before the code and review caught four spec requirements it never mentioned, a
 deep-link string that could not parse, an auth classifier that was unreachable by
 construction, and a config write that left a permission window. It is kept because it
@@ -36,10 +38,16 @@ injection, and is tested without an Electron harness.
 
 | Module | Owns |
 | --- | --- |
-| `src/main.ts` | Wiring only. Lifecycle, tray creation, dialogs, clipboard, `shell`, menu handlers. |
-| `src/config/host-config.ts` | Read, write, and watch `config.json`. |
-| `src/config/config-session.ts` | Config lifecycle: first-run seed, reload, add-host, which of the two errors wins. |
-| `src/config/pairing.ts` | Pairing URL to host entry. |
+| `src/main.ts` | Wiring only. Lifecycle, tray creation, dialogs, `shell`, `fs.watch` itself, menu handlers. |
+| `src/config/host-entry.ts` | The host schemas and their fingerprint. No I/O. |
+| `src/registry/binary.ts` | Varints and CRC32C. |
+| `src/registry/sstable.ts` | One LevelDB `.ldb`: footer, index, blocks, snappy. |
+| `src/registry/wal.ts` | One LevelDB `.log`: record framing and batches. |
+| `src/registry/leveldb-reader.ts` | A LevelDB directory: newest sequence wins. |
+| `src/registry/local-storage.ts` | Chromium localStorage key framing and value encoding. |
+| `src/registry/paseo-registry.ts` | Locate the Paseo app, validate, map to `HostEntry`. |
+| `src/registry/registry-session.ts` | Watch, debounce, fingerprint, apply, own the error row. |
+| `src/registry/registry-watcher.ts` | Keeping the directory watch attached: not installed yet, or the watch died. |
 | `src/daemon/host-connection.ts` | One host: connect, seed, subscribe, reconnect, report status. **All SDK use lives here.** |
 | `src/daemon/host-fleet.ts` | The set of connections: apply a config, isolate a bad entry, retry, serialize rebuilds. |
 | `src/daemon/host-store.ts` | Replicated workspaces and agents, keyed by host. |
@@ -47,7 +55,7 @@ injection, and is tested without an Electron harness.
 | `src/tray/menu-template.ts` | View model to Electron menu template. |
 | `src/launch/open-paseo.ts` | Deep link, with a browser fallback. |
 
-`host-fleet.ts` and `config-session.ts` exist because the first cut put their logic in
+`host-fleet.ts` and `registry-session.ts` exist because the first cut put their logic in
 `main.ts`, where nothing could test it. If you find yourself adding a decision to
 `main.ts`, that is the signal to extract instead.
 
@@ -75,19 +83,44 @@ injection, and is tested without an Electron harness.
   `STATUS_BUCKET_ORDER` and `STATUS_BUCKET_LABELS` in
   `packages/app/src/hooks/sidebar-status-view-model.ts` upstream. Paseo's glossary rule
   is "UI label wins, no synonyms", so the tray says what the sidebar says.
-- **`config.json` is written `0600`** via temp-file + `rename()`. It holds TCP passwords
-  and relay keys, and the app's own watcher reads it.
+- **Hosts come from the Paseo desktop app's Chromium localStorage, and nothing
+  else.** The record is `@paseo:daemon-registry` under origin `paseo://app`, in
+  `~/Library/Application Support/Paseo/Local Storage/leveldb`. This is an
+  unsupported surface and it is the app's only source of hosts: `config.json`
+  is neither read nor written, and there is no pairing flow. When the tray comes
+  up empty after a Paseo update, check three things in order — the record key,
+  the value's encoding tag, and the block compression type. The reader refuses
+  an unknown compression type by design rather than guessing, so that failure
+  names itself. See `docs/superpowers/2026-08-19-registry-sync-design.md`.
+- **The LevelDB reader never takes the lock and never writes.** It reads while
+  Chromium writes, so every block's CRC32C is verified before it is parsed and
+  an unreadable file is skipped rather than failing the whole read. Removing a
+  checksum check to "make it work" converts a torn read into silently wrong
+  credentials. A file that is gone (`ENOENT`) by the time it is read means the
+  listing was stale and the directory is listed again, winner or not; any other
+  read error is damage. Both distinctions were bugs once.
+- **One bad profile never costs another host.** The registry is parsed one
+  profile at a time and a profile the tray cannot use is named in the error
+  row; only a record that is not an array at all fails the whole read. The
+  desktop app is not version-pinned, so a connection type it adds tomorrow has
+  to reduce to "this host has no usable connection", not to zero hosts.
 
 ## Working here
 
 ```bash
 SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm install   # Homebrew libvips breaks sharp's prebuild
-npx vitest run                              # 181 tests, 10 files
+npx vitest run                              # 256 tests, 17 files
 npm run typecheck
+npm run fixtures:registry                   # regenerate LevelDB test fixtures
 ```
 
-- **Do not launch the app to check your work.** `electron .` writes a real `config.json`
-  into `~/Library/Application Support/Paseo Icon/`.
+- **`classic-level` is a devDependency, used only by `fixtures:registry`.** It opens a
+  real LevelDB to generate the `.ldb`/`.log` fixtures the registry reader is tested
+  against; the app itself never links it. It must never move into `dependencies` — the
+  reader that ships is pure JavaScript, and pulling in a native LevelDB binding would
+  defeat the reason it was hand-written.
+- **Do not launch the app to check your work.** `electron .` writes real state into
+  `~/Library/Application Support/Paseo Icon/`.
 - **`npm run dist` takes minutes** and downloads Electron binaries. Don't run it casually.
 - **There is no linter.** Don't assume `npm run lint` exists.
 - **Integration tests boot a real daemon** in-process from `@getpaseo/server`. They are
@@ -156,7 +189,6 @@ narrating a check you did not perform.
   has no `requiresAttention` branch, so an agent whose attention reason is `finished`
   sorts last and goes first. Closing this needs a daemon-side sort key. The cap stays
   visible in the menu, so nothing is lost silently.
-- The `addHost` save-failure test assumes a non-root runner.
 - The `release` workflow neither signs nor publishes. `appId`, `publish.owner`, and
   `notarize: true` are settled, and a local `npm run dist` signs and notarizes both the
   `.app` and the dmg from the maintainer's keychain — but the repo has no Actions secrets,
@@ -177,3 +209,6 @@ narrating a check you did not perform.
   files on disk have a space (`Paseo Icon-…`). electron-builder's own publisher renames
   them; a manual upload has to do it by hand, and does, so release asset names are
   hyphenated.
+- The registry reader depends on Chromium's private on-disk format. It handles
+  uncompressed and snappy blocks; a future Chromium that writes zstd will make
+  the tray show a named compression error until the reader learns that codec.

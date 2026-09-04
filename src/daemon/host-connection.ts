@@ -4,7 +4,7 @@ import {
   buildRelayWebSocketUrl,
   shouldUseTlsForDefaultHostedRelay,
 } from "@getpaseo/protocol/daemon-endpoints";
-import { hostEntryEndpointHint, type HostEntry } from "../config/host-config.js";
+import { hostEntryEndpointHint, type HostEntry } from "../config/host-entry.js";
 import type { HostStore } from "./host-store.js";
 import { errorText } from "../error-text.js";
 
@@ -37,8 +37,9 @@ function buildClient(entry: HostEntry): DaemonClient {
   // wrapper, which generates one when omitted). It must be stable across app
   // restarts, not random per connection: the daemon keys live session resume
   // by clientId, so a fresh random id on every launch would always take the
-  // "new session" path instead of resuming. `entry.id` is already a stable,
-  // per-host UUID persisted in config.json.
+  // "new session" path instead of resuming. `entry.id` is already a stable
+  // identifier — the daemon's own `serverId`, sourced from the Paseo app's
+  // registry.
   const clientId = `paseo-menubar-${entry.id}`;
 
   if (entry.type === "relay") {

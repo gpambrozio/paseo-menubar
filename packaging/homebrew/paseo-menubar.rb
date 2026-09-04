@@ -49,9 +49,9 @@ cask "paseo-menubar" do
   # leave it running with its menu bar item still there.
   uninstall quit: "br.eng.gustavo.paseo-menubar"
 
-  # config.json lives in the userData directory, which Electron names from
-  # productName -- "Paseo Icon", not the cask token. It holds TCP passwords and
-  # relay keys, so `brew uninstall --zap` is the one that really removes them.
+  # The userData directory is named from productName -- "Paseo Icon", not the
+  # cask token. The app keeps no host credentials of its own (they are read from
+  # the Paseo desktop app's storage), so this is Electron's own state only.
   zap trash: [
     "~/Library/Application Support/Paseo Icon",
     "~/Library/Preferences/br.eng.gustavo.paseo-menubar.plist",
