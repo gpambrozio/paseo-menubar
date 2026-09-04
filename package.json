@@ -28,7 +28,7 @@
     "@types/node": "^24.6.0",
     "@types/snappyjs": "^0.7.1",
     "classic-level": "^2.0.0",
-    "electron": "41.2.0",
+    "electron": "41.10.3",
     "electron-builder": "^26.8.1",
     "lucide-static": "1.31.0",
     "pino": "^9.5.0",
