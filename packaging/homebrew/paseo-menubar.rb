@@ -10,9 +10,12 @@
 #                is "Paseo Icon", but electron-builder.yml sets
 #                `executableName: PaseoIcon`, and that is what names the bundle
 #                directory. render-cask.test.mjs asserts the two still agree.
-#   depends_on   arch is not decoration. `npm run dist` builds for the host arch
-#                only, so every published artifact is arm64; without this,
-#                Homebrew installs an app that cannot launch on Intel.
+#   depends_on   Neither line is decoration. `npm run dist` builds for the host
+#                arch only, so every published artifact is arm64; without that,
+#                Homebrew installs an app that cannot launch on Intel. The macos
+#                line has to track the floor Electron imposes, which moves on
+#                its own -- `npm run dist` runs scripts/check-cask-macos.mjs
+#                against the built bundle and fails when the two disagree.
 #   url          The files on disk have a space ("Paseo Icon-0.1.0-arm64.dmg")
 #                and the release assets have hyphens. electron-builder's own
 #                publisher renames them, and the manual upload matches it by
@@ -36,10 +39,22 @@ cask "paseo-menubar" do
     strategy :github_latest
   end
 
-  # LSMinimumSystemVersion in the built bundle is 12.0. The bare symbol reads as
-  # "exactly Monterey" but Homebrew resolves it to a minimum -- `brew info`
-  # reports "macOS >= 12" -- and the `">= :monterey"` spelling is deprecated.
-  depends_on macos: :monterey
+  # LSMinimumSystemVersion in the built bundle is 13.0. Nothing here sets that
+  # floor: electron-builder.yml leaves `minimumSystemVersion` unset, so the
+  # bundle inherits whatever Electron requires, and an Electron major can raise
+  # it with no diff in this repo at all. Electron 44 did exactly that, moving it
+  # from 12.0 to 13.0. scripts/check-cask-macos.mjs reads the floor out of the
+  # built bundle during `npm run dist` and fails the release when this symbol
+  # disagrees, because the failure it prevents is invisible to the maintainer:
+  # the cask installs happily on the older macOS and the app then refuses to
+  # launch, on someone else's machine. It runs at packaging time and not in the
+  # test suite because as of Electron 44 the package has no postinstall, so
+  # `npm ci` leaves no binary for a test to read.
+  #
+  # The bare symbol reads as "exactly Ventura" but Homebrew resolves it to a
+  # minimum -- `brew info` reports "macOS >= 13" -- and the `">= :ventura"`
+  # spelling is deprecated.
+  depends_on macos: :ventura
   depends_on arch: :arm64
 
   app "PaseoIcon.app"

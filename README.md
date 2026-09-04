@@ -41,7 +41,7 @@ brew install --cask gpambrozio/tap/paseo-menubar
 
 Or download the dmg from [the latest release](https://github.com/gpambrozio/paseo-menubar/releases/latest).
 
-Builds are Apple Silicon only and need macOS 12 or later. The app and the disk image
+Builds are Apple Silicon only and need macOS 13 or later. The app and the disk image
 are both signed and notarized, so Gatekeeper opens it without a right-click detour.
 
 To remove it, `brew uninstall --cask paseo-menubar` — or `--zap` instead of

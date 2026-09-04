@@ -1,7 +1,7 @@
 {
   "name": "paseo-menubar",
   "productName": "Paseo Icon",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Menu-bar indicator for Paseo agents",
   "author": "Gustavo Ambrozio",
   "license": "AGPL-3.0-or-later",
@@ -14,26 +14,27 @@
     "icons": "node scripts/make-icons.mjs",
     "fixtures:registry": "node scripts/make-registry-fixtures.mjs",
     "start": "npm run build && npm run icons && electron .",
-    "dist": "npm run build && npm run icons && electron-builder && npm run notarize:dmg",
+    "dist": "npm run build && npm run icons && electron-builder && npm run check:cask-macos && npm run notarize:dmg",
+    "check:cask-macos": "node scripts/check-cask-macos.mjs",
     "notarize:dmg": "node scripts/notarize-dmg.mjs"
   },
   "dependencies": {
     "@getpaseo/client": "0.4.0",
     "@getpaseo/protocol": "0.4.0",
     "snappyjs": "^0.7.0",
-    "zod": "^4.4.3"
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@getpaseo/server": "0.4.0",
-    "@types/node": "^24.6.0",
+    "@types/node": "^26.4.0",
     "@types/snappyjs": "^0.7.1",
-    "classic-level": "^2.0.0",
-    "electron": "41.2.0",
+    "classic-level": "^3.0.0",
+    "electron": "44.1.0",
     "electron-builder": "^26.8.1",
-    "lucide-static": "1.31.0",
-    "pino": "^9.5.0",
-    "sharp": "^0.34.0",
-    "typescript": "^5.9.3",
-    "vitest": "^4.1.6"
+    "lucide-static": "1.38.0",
+    "pino": "^10.3.1",
+    "sharp": "^0.35.4",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
   }
 }
