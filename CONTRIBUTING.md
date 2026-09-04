@@ -46,8 +46,41 @@ A few rules that are easy to violate without knowing:
 - **Never crash the tray.** Bad input keeps the last known-good state and
   surfaces an error row. A `void`-ed promise that can reject is a bug.
 - **No silent caps.** Any truncated list renders a visible overflow row.
-- **The Paseo SDK is pinned exactly** at `0.4.0`, with no caret. Drifting it
-  forward voids the compatibility reasoning that makes pinning safe.
+- **The Paseo SDK is pinned exactly** at `0.4.0`, with no caret — see below.
+
+## Why the SDK is pinned
+
+`@getpaseo/client`, `@getpaseo/protocol`, and `@getpaseo/server` are pinned at
+exactly `0.4.0`, with no caret. That one number is holding two different
+couplings, and they pull in opposite directions.
+
+**The daemon conversation wants the client to stay old.** Paseo commits that old
+clients parse messages from new daemons. That guarantee runs one direction only:
+nothing says a *new* client can talk to an *old* daemon. Users install this app
+on their own schedule and run whatever daemon their Paseo app ships, so a caret
+could float the client past a user's daemon into the direction that is not
+covered. Pinning keeps the tray permanently on the covered side. `APP_VERSION` in
+`src/daemon/host-connection.ts` is the same number again — it goes out in the
+handshake as `appVersion`, and the daemon gates provider visibility on it, so the
+two move together or not at all.
+
+**Reading the desktop app's registry wants the protocol package to stay
+current.** The host list is parsed out of the Paseo desktop app's own storage and
+validated against `DirectTcpHostConnectionSchema` from the pinned protocol
+package — and the desktop app is *not* version-pinned. When a Paseo update adds a
+connection type this version has never heard of, the host is dropped and named in
+the error row rather than taking the other hosts down with it. That degradation is
+deliberate, but the fix for it is bumping `@getpaseo/protocol`, which is the thing
+the pin otherwise forbids.
+
+So: do not let a dependency bot move these, and do not bump them to clear a
+warning. Bumping them to teach the registry reader a connection type a newer Paseo
+writes is a legitimate reason — it is a decision someone makes on purpose, with
+the daemon-compatibility side weighed, not a routine update.
+
+`@getpaseo/server` is a third case: a devDependency used only by
+`src/daemon/daemon-harness.ts` to boot a real daemon in tests. It is pinned so the
+tests exercise the daemon version this client claims to be compatible with.
 
 ## Testing
 

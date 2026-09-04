@@ -6,10 +6,18 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
     ignore:
-      # Pinned at exactly 0.4.0 on purpose. Paseo guarantees that old clients
-      # parse messages from new daemons, and that guarantee is what makes the
-      # exact pin safe; a Dependabot bump would quietly void the reasoning. See
-      # CLAUDE.md. Moving these forward is a deliberate act, not a routine one.
+      # Pinned at exactly 0.4.0, and that one number holds two couplings that
+      # pull opposite ways -- which is why no bot should move it.
+      #
+      # The daemon conversation wants the client old: Paseo guarantees old
+      # clients parse messages from new daemons, one direction only, and a
+      # floated client could land past a user's daemon on the uncovered side.
+      # Reading the desktop app's registry wants the protocol package current:
+      # that app is not version-pinned, so a connection type it adds tomorrow
+      # is one this version drops into the error row until the package moves.
+      #
+      # Bumping these is sometimes right. It is never routine, and never
+      # something a pull request should decide on its own. See CONTRIBUTING.md.
       #
       # `ignore` applies to version updates only, so a real CVE in the pinned
       # SDK still opens a pull request.
