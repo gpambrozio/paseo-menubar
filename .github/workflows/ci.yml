@@ -1,0 +1,26 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  # Deliberately the same runner, node version and commands as the `macos` job
+  # in release.yml, minus the packaging step. A tag build and a PR build should
+  # mean the same thing, and macos-14 is not incidental: the registry reader
+  # resolves paths under ~/Library and the integration tests boot a real daemon
+  # in-process, so a Linux runner would be testing a different program.
+  test:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+        env:
+          # Homebrew's libvips breaks sharp's prebuild; the runner has no
+          # Homebrew libvips, but keeping the flag here matches release.yml and
+          # the documented local install.
+          SHARP_IGNORE_GLOBAL_LIBVIPS: "1"
+      - run: npm run typecheck && npm test

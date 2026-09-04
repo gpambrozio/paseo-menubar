@@ -1,0 +1,19 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    ignore:
+      # Pinned at exactly 0.4.0 on purpose. Paseo guarantees that old clients
+      # parse messages from new daemons, and that guarantee is what makes the
+      # exact pin safe; a Dependabot bump would quietly void the reasoning. See
+      # CLAUDE.md. Moving these forward is a deliberate act, not a routine one.
+      - dependency-name: "@getpaseo/client"
+      - dependency-name: "@getpaseo/protocol"
+      - dependency-name: "@getpaseo/server"
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
