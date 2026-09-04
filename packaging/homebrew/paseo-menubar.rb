@@ -14,7 +14,8 @@
 #                arch only, so every published artifact is arm64; without that,
 #                Homebrew installs an app that cannot launch on Intel. The macos
 #                line has to track the floor Electron imposes, which moves on
-#                its own -- render-cask.test.mjs asserts the two agree.
+#                its own -- `npm run dist` runs scripts/check-cask-macos.mjs
+#                against the built bundle and fails when the two disagree.
 #   url          The files on disk have a space ("Paseo Icon-0.1.0-arm64.dmg")
 #                and the release assets have hyphens. electron-builder's own
 #                publisher renames them, and the manual upload matches it by
@@ -42,10 +43,13 @@ cask "paseo-menubar" do
   # floor: electron-builder.yml leaves `minimumSystemVersion` unset, so the
   # bundle inherits whatever Electron requires, and an Electron major can raise
   # it with no diff in this repo at all. Electron 44 did exactly that, moving it
-  # from 12.0 to 13.0. render-cask.test.mjs now reads the floor out of the
-  # installed Electron and fails when this symbol disagrees, because the failure
-  # it prevents is invisible to the maintainer: the cask installs happily on the
-  # older macOS and the app then refuses to launch.
+  # from 12.0 to 13.0. scripts/check-cask-macos.mjs reads the floor out of the
+  # built bundle during `npm run dist` and fails the release when this symbol
+  # disagrees, because the failure it prevents is invisible to the maintainer:
+  # the cask installs happily on the older macOS and the app then refuses to
+  # launch, on someone else's machine. It runs at packaging time and not in the
+  # test suite because as of Electron 44 the package has no postinstall, so
+  # `npm ci` leaves no binary for a test to read.
   #
   # The bare symbol reads as "exactly Ventura" but Homebrew resolves it to a
   # minimum -- `brew info` reports "macOS >= 13" -- and the `">= :ventura"`

@@ -14,7 +14,8 @@
     "icons": "node scripts/make-icons.mjs",
     "fixtures:registry": "node scripts/make-registry-fixtures.mjs",
     "start": "npm run build && npm run icons && electron .",
-    "dist": "npm run build && npm run icons && electron-builder && npm run notarize:dmg",
+    "dist": "npm run build && npm run icons && electron-builder && npm run check:cask-macos && npm run notarize:dmg",
+    "check:cask-macos": "node scripts/check-cask-macos.mjs",
     "notarize:dmg": "node scripts/notarize-dmg.mjs"
   },
   "dependencies": {
