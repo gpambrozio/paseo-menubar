@@ -1,0 +1,67 @@
+name: Bug report
+description: Something in the menu bar is wrong or missing
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Paseo Icon is a status indicator — it reads the hosts and workspace
+        states the Paseo desktop app already has. If agents themselves are
+        misbehaving, that belongs in the Paseo project rather than here.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What the menu bar showed, and what you expected instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Paseo Icon version
+      description: The version in the menu, or the release you installed.
+      placeholder: "0.2.0"
+    validations:
+      required: true
+  - type: input
+    id: paseo-version
+    attributes:
+      label: Paseo desktop app version
+      description: >-
+        Hosts are read out of the desktop app's own storage, so its version is
+        often the thing that changed.
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "15.2"
+    validations:
+      required: true
+  - type: dropdown
+    id: error-row
+    attributes:
+      label: Does the menu show a "Configuration error" row?
+      description: >-
+        This separates a failure to read the host registry from a failure to
+        reach a daemon, which are fixed in completely different places. If there
+        is a row, paste its exact text in the box below.
+      options:
+        - "No"
+        - "Yes"
+        - "Not sure"
+    validations:
+      required: true
+  - type: textarea
+    id: error-text
+    attributes:
+      label: Error row text, if any
+      render: text
+  - type: textarea
+    id: hosts
+    attributes:
+      label: Hosts
+      description: >-
+        How many hosts are paired in the Paseo desktop app, and does the tray
+        show the same ones? Do not paste tokens or credentials.
