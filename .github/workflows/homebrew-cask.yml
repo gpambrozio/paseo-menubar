@@ -37,9 +37,9 @@ jobs:
       TAG: ${{ inputs.tag || github.event.release.tag_name }}
       TAP_REPOSITORY: gpambrozio/homebrew-tap
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -74,7 +74,7 @@ jobs:
 
       - name: Check out the tap
         if: env.HAVE_TAP_TOKEN == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: ${{ env.TAP_REPOSITORY }}
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
