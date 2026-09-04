@@ -1,7 +1,7 @@
 {
   "name": "paseo-menubar",
   "productName": "Paseo Icon",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Menu-bar indicator for Paseo agents",
   "author": "Gustavo Ambrozio",
   "license": "AGPL-3.0-or-later",

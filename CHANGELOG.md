@@ -7,6 +7,16 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Entries describe what changed for someone running the app. Refactors, tests, and
 documentation are left to the git history.
 
+## [0.3.0] — 2026-09-03
+
+**This release requires macOS 13 or later.** Earlier releases ran on macOS 12.
+
+### Changed
+
+- Updated to Electron 44, which is what raises the macOS requirement. If you are
+  on macOS 12, stay on 0.2.0: Homebrew will not offer you this version, and a
+  manually installed copy will not launch.
+
 ## [0.2.0] — 2026-09-03
 
 Hosts now come from the Paseo desktop app instead of from a config file of this
@@ -62,5 +72,6 @@ First release.
 - Signed and notarized builds of both the app and the disk image, so Gatekeeper
   opens them without a right-click detour. Apple Silicon only, macOS 12 or later.
 
+[0.3.0]: https://github.com/gpambrozio/paseo-menubar/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/gpambrozio/paseo-menubar/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/gpambrozio/paseo-menubar/releases/tag/v0.1.0

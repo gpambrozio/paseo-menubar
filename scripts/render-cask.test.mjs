@@ -118,6 +118,77 @@ describe("renderCask", () => {
   });
 });
 
+// The macOS floor is the one cask stanza nothing in this repo controls.
+// electron-builder.yml leaves `minimumSystemVersion` unset, so the bundle
+// inherits whatever the pinned Electron requires -- Electron 44 moved it from
+// 12.0 to 13.0 with no diff here at all. A stale `depends_on macos:` is
+// invisible to whoever ships the release: Homebrew installs on the older macOS
+// and the app then refuses to launch, on someone else's machine.
+//
+// Homebrew names releases by symbol and the bundle records a number, so the two
+// only meet through this table. An Electron that demands something outside it
+// fails here rather than being guessed at.
+const MACOS_SYMBOLS = new Map([
+  ["12", "monterey"],
+  ["13", "ventura"],
+  ["14", "sonoma"],
+  ["15", "sequoia"],
+  ["26", "tahoe"],
+]);
+
+const ELECTRON_INFO_PLIST = path.join(
+  ROOT,
+  "node_modules",
+  "electron",
+  "dist",
+  "Electron.app",
+  "Contents",
+  "Info.plist",
+);
+
+/**
+ * The macOS version the built bundle will declare. An explicit
+ * `minimumSystemVersion` in electron-builder.yml wins; otherwise it is whatever
+ * the installed Electron asks for.
+ */
+async function bundleMacOSFloor() {
+  const builder = await readFile(path.join(ROOT, "electron-builder.yml"), "utf8");
+  const override = builder.match(/^\s+minimumSystemVersion:\s*"?([\d.]+)"?\s*$/m)?.[1];
+  if (override) return override;
+
+  // Deliberately not a skip. Electron's binary is a postinstall download, and
+  // an absent one means this checkout cannot build the app either -- reporting
+  // that is more useful than passing a test that checked nothing.
+  let plist;
+  try {
+    plist = await readFile(ELECTRON_INFO_PLIST, "utf8");
+  } catch {
+    throw new Error(
+      `Electron's Info.plist is missing at ${ELECTRON_INFO_PLIST}. Its postinstall ` +
+        "download did not run; 'node node_modules/electron/install.js' fetches it.",
+    );
+  }
+  return plist.match(
+    /<key>LSMinimumSystemVersion<\/key>\s*<string>([\d.]+)<\/string>/,
+  )?.[1];
+}
+
+describe("the cask requires the macOS the bundle actually needs", () => {
+  it("names the same floor Electron imposes", async () => {
+    const floor = await bundleMacOSFloor();
+    expect(floor).toBeDefined();
+
+    const major = floor.split(".")[0];
+    const symbol = MACOS_SYMBOLS.get(major);
+    expect(
+      symbol,
+      `No Homebrew symbol known for macOS ${floor}. Add it to MACOS_SYMBOLS.`,
+    ).toBeDefined();
+
+    expect(await template()).toContain(`  depends_on macos: :${symbol}\n`);
+  });
+});
+
 // The cask names the bundle directory, which comes from `executableName` in
 // electron-builder.yml and not from productName. Changing that field renames
 // PaseoIcon.app and silently breaks every `brew install --cask` with an
