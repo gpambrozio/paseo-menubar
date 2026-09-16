@@ -67,6 +67,15 @@ public enum SSTable {
         let value: ArraySlice<UInt8>
     }
 
+    /// A block handle's offset and size arrive as 64-bit varints from bytes we
+    /// do not control — the footer carries no checksum of its own. Converting
+    /// one straight to `Int` traps uncatchably above `Int64.max`, so the range
+    /// check happens here, before the value is used, and reports as damage.
+    private static func handleValue(_ raw: UInt64) throws -> Int {
+        guard let value = Int(exactly: raw) else { throw SSTableError.blockPastEnd }
+        return value
+    }
+
     /// Every record for `userKey` in one `.ldb`. Uses the index block to visit
     /// only the data blocks whose range can contain the key. A key can appear
     /// more than once with different sequence numbers, so this returns all
@@ -85,7 +94,7 @@ public enum SSTable {
             let handleBytes = Array(indexEntry.value)
             let offset = try Binary.readVarint64(handleBytes, at: 0)
             let size = try Binary.readVarint64(handleBytes, at: offset.next)
-            let dataBlock = try readBlock(file, BlockHandle(offset: Int(offset.value), size: Int(size.value)))
+            let dataBlock = try readBlock(file, BlockHandle(offset: try handleValue(offset.value), size: try handleValue(size.value)))
 
             for entry in try blockEntries(dataBlock) {
                 let parsed = try splitInternalKey(entry.key)
@@ -118,7 +127,7 @@ public enum SSTable {
         pos = try Binary.readVarint64(footer, at: pos).next
         let offset = try Binary.readVarint64(footer, at: pos)
         let size = try Binary.readVarint64(footer, at: offset.next)
-        return BlockHandle(offset: Int(offset.value), size: Int(size.value))
+        return BlockHandle(offset: try handleValue(offset.value), size: try handleValue(size.value))
     }
 
     /// Reads one block, verifying its checksum before anything parses it.

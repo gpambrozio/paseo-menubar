@@ -81,4 +81,32 @@ struct SSTableTests {
             try SSTable.find(in: bytes, userKey: key)
         }
     }
+
+    @Test("refuses a block handle too large for the platform's Int rather than trapping")
+    func oversizedBlockHandle() throws {
+        // The footer has no checksum, so a file whose magic survives while its
+        // handle bytes are corrupted reaches the conversion. A ten-byte varint
+        // encoding 2^63 is above Int.max, and `Int(_:)` on it would trap the
+        // process rather than throw.
+        var bytes = try RegistryFixtures.tableBytes("compacted")
+        var huge: [UInt8] = []
+        var value: UInt64 = 1 << 63
+        while value > 0x7f {
+            huge.append(UInt8(value & 0x7f) | 0x80)
+            value >>= 7
+        }
+        huge.append(UInt8(value))
+
+        // Rewrite the footer: two zero varints for the metaindex handle, then
+        // the oversized index handle, then the magic, padded to 48 bytes.
+        var footer: [UInt8] = [0x00, 0x00] + huge + [0x01]
+        footer += [UInt8](repeating: 0, count: 40 - footer.count)
+        footer += [0x57, 0xfb, 0x80, 0x8b, 0x24, 0x75, 0x47, 0xdb]
+        #expect(footer.count == 48)
+        bytes.replaceSubrange((bytes.count - 48)..., with: footer)
+
+        #expect(throws: SSTableError.blockPastEnd) {
+            try SSTable.find(in: bytes, userKey: RegistryFixtures.registryKey)
+        }
+    }
 }
