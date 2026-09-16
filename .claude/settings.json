@@ -1,3 +1,6 @@
 {
-  "autoMemoryDirectory": "~/agent-memory/paseo-menubar"
+  "autoMemoryDirectory": "~/agent-memory/paseo-menubar",
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": true
+  }
 }
