@@ -13,6 +13,8 @@
     "test": "vitest run",
     "icons": "node scripts/make-icons.mjs",
     "fixtures:registry": "node scripts/make-registry-fixtures.mjs",
+    "fixtures:e2ee": "node scripts/make-e2ee-fixtures.mjs PaseoIconPackage/Tests/PaseoIconCoreTests/Fixtures/e2ee-vectors.json",
+    "test:swift": "swift test --package-path PaseoIconPackage",
     "start": "npm run build && npm run icons && electron .",
     "dist": "npm run build && npm run icons && electron-builder && npm run check:cask-macos && npm run notarize:dmg",
     "check:cask-macos": "node scripts/check-cask-macos.mjs",
@@ -34,7 +36,9 @@
     "lucide-static": "1.42.0",
     "pino": "^10.3.1",
     "sharp": "^0.35.4",
+    "tweetnacl": "^1.0.3",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.0"
+    "vitest": "^5.0.0",
+    "ws": "^8.21.3"
   }
 }
