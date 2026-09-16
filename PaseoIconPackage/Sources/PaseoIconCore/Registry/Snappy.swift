@@ -2,6 +2,15 @@ public enum SnappyError: Error, Equatable {
     case truncated
     case badOffset
     case lengthMismatch(expected: Int, actual: Int)
+
+    public var message: String {
+        switch self {
+        case .truncated: "snappy block ended mid-token"
+        case .badOffset: "snappy copy reaches before the start of its output"
+        case .lengthMismatch(let expected, let actual):
+            "snappy block declared \(expected) bytes and produced \(actual)"
+        }
+    }
 }
 
 /// Decoder for the raw snappy format LevelDB stores its compressed blocks in

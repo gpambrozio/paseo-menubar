@@ -17,5 +17,10 @@ public func errorText(_ error: any Error) -> String {
     return String(describing: error)
 }
 
+// Every error this codebase throws through a user-facing path renders as a
+// sentence. Binary and Snappy are reachable from SSTable, which calls both
+// unwrapped, so a torn file surfaces through `LevelDBReadError.cause`.
 extension SSTableError: MessageError {}
 extension LocalStorageError: MessageError {}
+extension BinaryError: MessageError {}
+extension SnappyError: MessageError {}

@@ -234,3 +234,46 @@ struct LevelDBReaderTests {
         #expect(fs.readCounts[target] == 2)
     }
 }
+
+/// `LocalFileSystem` is the one place a real OS error becomes the
+/// `notFound`-versus-damage distinction the re-list rule depends on. Every
+/// other test injects `FileReadError` directly and never exercises it.
+struct LocalFileSystemTests {
+    @Test("maps a genuinely missing file to notFound")
+    func missingFile() throws {
+        let dir = try RegistryFixtures.temporaryDirectory("filesystem")
+        let missing = dir.appendingPathComponent("gone.ldb").path
+        do {
+            _ = try LocalFileSystem().readFile(missing)
+            Issue.record("expected readFile to throw")
+        } catch let error as FileReadError {
+            guard case .notFound = error else {
+                Issue.record("expected notFound, got \(error)")
+                return
+            }
+        }
+    }
+
+    @Test("maps a file it cannot read to damage, not to a vanished file")
+    func unreadableFile() throws {
+        let dir = try RegistryFixtures.temporaryDirectory("filesystem")
+        let unreadable = dir.appendingPathComponent("locked.ldb")
+        try Data("x".utf8).write(to: unreadable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: unreadable.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: unreadable.path) }
+
+        do {
+            _ = try LocalFileSystem().readFile(unreadable.path)
+            // Running as root defeats the permission bits; skip rather than
+            // assert something the environment made untrue.
+            return
+        } catch let error as FileReadError {
+            // Calling this "vanished" is how a permission problem turned into
+            // an applied empty host set.
+            guard case .other = error else {
+                Issue.record("expected other, got \(error)")
+                return
+            }
+        }
+    }
+}

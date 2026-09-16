@@ -7,6 +7,12 @@ public enum BinaryError: Error, Equatable {
     /// "retry" and "wrong credentials".
     case varintPastEnd(String)
     case varintTooLong(String)
+
+    public var message: String {
+        switch self {
+        case .varintPastEnd(let detail), .varintTooLong(let detail): detail
+        }
+    }
 }
 
 /// Varint, checksum, and little-endian primitives for LevelDB's on-disk
