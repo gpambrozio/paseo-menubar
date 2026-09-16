@@ -2,3 +2,5 @@ node_modules/
 dist/
 release/
 assets/generated/
+PaseoIconPackage/.build/
+scripts/relay-harness/.wrangler/
