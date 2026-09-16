@@ -14,7 +14,7 @@ upstream change will land.
 
 ## The spec is the authority
 
-`docs/superpowers/` holds six documents. They are not equals:
+`docs/superpowers/` holds seven documents. They are not equals:
 
 | Document | Standing |
 | --- | --- |
@@ -22,6 +22,7 @@ upstream change will land.
 | `2026-08-19-registry-sync-design.md` | **Binding.** Supersedes the parts of the doc above that describe `config.json` as the source of hosts and clipboard pairing as the way to add one. |
 | `2026-09-16-native-swift-app-design.md` | **Binding** for the native (Swift) build. Changes how the app is built, not what it shows; adds the daemon wire contract and the relay E2EE contract the native app speaks. |
 | `plans/2026-09-16-native-app-foundation.md` | Historical. Plan 1 of the native build, executed 2026-09-16. Its Swift code was compiled and tested before it was written, but two review fixes landed after it: `E2EEChannel.connect()` resets per-socket state (63f92cd) and a fatal channel close is forwarded to the session (the final review fix). The committed code wins over the plan's code blocks. |
+| `plans/2026-09-16-native-app-parity.md` | **Live.** Plan 2 of the native build: the registry reader, the store, the fleet, the view model, the menu, the app, packaging, and the cutover that deletes Electron. Its code was compiled and its tests run before it was written. Task 13 is gated on a human running the app. |
 | `2026-08-16-paseo-icon-implementation-plan.md` | Historical. Contains known defects. |
 | `plans/2026-08-19-registry-sync.md` | Historical. Written before the code; review changed the reader's retry rule, the registry parser's failure isolation, and the watcher's seam after it was written. |
 
