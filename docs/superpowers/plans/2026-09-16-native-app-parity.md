@@ -4102,22 +4102,12 @@ extension HostEntry {
 }
 ```
 
-- [ ] **Step 4: Add the unvalidated-config hatch**
+- [ ] **Step 4: Confirm the unvalidated-config hatch is already there**
 
-The fleet's duplicate-id guard is defensive: `AppConfig.validate` already rejects duplicates, so the guard only fires for a call site that skipped validation, and that is what the test has to construct. In `AppConfig.swift`, replace the `fileprivate init` with:
+The fleet's duplicate-id guard is defensive: `AppConfig.validate` already rejects duplicates, so the guard only fires for a call site that skipped validation, and that is what `HostFleetTests.duplicateId` has to construct. Task 5 already wrote the hatch, so this is a check rather than an edit.
 
-```swift
-    /// A config that skipped validation. Nothing in the app builds one this
-    /// way: the fleet's duplicate-id guard is the last line of defence for a
-    /// call site that does, and this is how that guard is tested.
-    public static func unvalidated(hosts: [HostEntry]) -> AppConfig {
-        AppConfig(hosts: hosts)
-    }
-
-    private init(hosts: [HostEntry]) {
-        self.hosts = hosts
-    }
-```
+Run: `grep -n 'unvalidated' PaseoIconPackage/Sources/PaseoIconCore/Config/AppConfig.swift`
+Expected: the `static func unvalidated(hosts:)` declaration and its comment. If it is missing, Task 5 was transcribed wrong; fix it there rather than adding a second copy here.
 
 - [ ] **Step 5: Write the fixtures and tests**
 
@@ -7124,6 +7114,12 @@ git rm electron-builder.yml scripts/notarize-dmg.mjs tsconfig.json
 ```
 
 - [ ] **Step 3: Repoint the tooling**
+
+`scripts/make-registry-fixtures.mjs` writes to two trees after Task 2, and one of them is the `src/` you just deleted — left alone it would recreate it on the next run. Drop the TypeScript half: delete the `root` constant and its `cp` to `swiftRoot`, and write directly to the Swift fixtures directory instead, renaming `swiftRoot` to `root`. Its header comment about Chromium's key framing stays; the line about writing to both suites goes.
+
+Run: `node scripts/make-registry-fixtures.mjs && git status --short src 2>/dev/null` — expected: the six fixture directories rewritten under `PaseoIconPackage/`, and no `src/` recreated.
+
+`scripts/check-cask-macos.mjs` and `scripts/render-cask.mjs` each open with a comment explaining that they live in `scripts/` rather than `src/` because `src/` is compiled into the asar. There is no asar and no `src/` any more; reword both to say they are build tooling that never ships. `scripts/swift-test-daemon.mjs` refers to `src/daemon/daemon-harness.ts` as the thing it mirrors — change that to name this plan instead, since the file it points at is gone.
 
 In `vitest.config.ts`, drop the `src` glob so only `scripts/**/*.test.mjs` remains, and say why:
 
