@@ -7,7 +7,7 @@ import Foundation
 /// starts once its own fetch has asked for it, so `agent_update` needs
 /// `fetch_agents_request` and `workspace_update` needs `fetch_workspaces_request`.
 @MainActor
-public final class HostConnection {
+public final class HostConnection: HostConnecting {
     public static let agentPageLimit = 200
     public static let workspacePageLimit = 200
     public static let seedRetryDelay: Duration = .seconds(2)

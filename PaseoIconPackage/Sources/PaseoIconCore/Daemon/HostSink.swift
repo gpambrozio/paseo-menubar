@@ -21,3 +21,11 @@ public protocol HostSink: AnyObject {
     func applyAgentUpdate(_ hostId: String, _ update: AgentUpdate)
     func applyWorkspaceUpdate(_ hostId: String, _ update: WorkspaceUpdate)
 }
+
+/// What the fleet holds: one host's connection, closable. `HostConnection` is
+/// the only production conformance; the fleet depends on this so its
+/// bookkeeping can be tested without a socket.
+@MainActor
+public protocol HostConnecting: AnyObject {
+    func close()
+}

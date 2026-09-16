@@ -31,6 +31,12 @@ public struct DiffStat: Codable, Equatable, Sendable {
     public let deletions: Int
 }
 
+/// One pending permission request. Only the count matters here: it is the
+/// first term of the daemon's own urgency ranking.
+public struct AgentPermissionRequest: Codable, Equatable, Sendable {
+    public let id: String?
+}
+
 public struct WorkspaceDescriptor: Codable, Equatable, Sendable {
     public let id: String
     public let projectId: String
@@ -43,6 +49,26 @@ public struct WorkspaceDescriptor: Codable, Equatable, Sendable {
     public let diffStat: DiffStat?
 
     public var bucket: WorkspaceStateBucket? { WorkspaceStateBucket(rawValue: status) }
+
+    public init(
+        id: String,
+        projectId: String = "p1",
+        projectDisplayName: String = "paseo",
+        name: String? = nil,
+        status: String? = nil,
+        archivingAt: String? = nil,
+        activityAt: String? = nil,
+        diffStat: DiffStat? = nil
+    ) {
+        self.id = id
+        self.projectId = projectId
+        self.projectDisplayName = projectDisplayName
+        self.name = name ?? id
+        self.status = status ?? "done"
+        self.archivingAt = archivingAt
+        self.activityAt = activityAt
+        self.diffStat = diffStat
+    }
 }
 
 public struct AgentSnapshot: Codable, Equatable, Sendable {
@@ -54,6 +80,41 @@ public struct AgentSnapshot: Codable, Equatable, Sendable {
     public let requiresAttention: Bool?
     public let attentionReason: String?
     public let archivedAt: String?
+    public let pendingPermissions: [AgentPermissionRequest]?
+
+    public init(
+        id: String,
+        workspaceId: String? = nil,
+        status: String? = nil,
+        title: String? = nil,
+        updatedAt: String? = nil,
+        requiresAttention: Bool? = nil,
+        attentionReason: String? = nil,
+        archivedAt: String? = nil,
+        pendingPermissions: [AgentPermissionRequest]? = nil
+    ) {
+        self.id = id
+        self.workspaceId = workspaceId
+        self.status = status ?? "idle"
+        self.title = title
+        self.updatedAt = updatedAt ?? "2026-08-16T00:00:00.000Z"
+        self.requiresAttention = requiresAttention
+        self.attentionReason = attentionReason
+        self.archivedAt = archivedAt
+        self.pendingPermissions = pendingPermissions
+    }
+
+    /// The daemon's own urgency ranking, lower being more urgent, copied from
+    /// `getAgentStatusPriority` in `@getpaseo/protocol`'s `agent-state-bucket`.
+    /// Ranks pending permission 0, error 1, running 2, initializing 3, and
+    /// everything else 4.
+    public var statusPriority: Int {
+        if (pendingPermissions?.count ?? 0) > 0 || attentionReason == "permission" { return 0 }
+        if status == "error" || attentionReason == "error" { return 1 }
+        if status == "running" { return 2 }
+        if status == "initializing" { return 3 }
+        return 4
+    }
 }
 
 public enum AgentUpdate: Equatable, Sendable {
