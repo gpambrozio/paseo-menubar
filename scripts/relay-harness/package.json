@@ -1,0 +1,10 @@
+{
+  "name": "paseo-menubar-relay-harness",
+  "private": true,
+  "type": "module",
+  "description": "A local Paseo relay under wrangler dev, for the opt-in Swift relay end-to-end test. Installed separately because wrangler is large and only this test needs it.",
+  "devDependencies": {
+    "@getpaseo/relay": "0.4.0",
+    "wrangler": "^4.105.0"
+  }
+}

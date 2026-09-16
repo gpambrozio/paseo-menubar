@@ -1,0 +1,15 @@
+# The published relay worker, run locally. Mirrors upstream's
+# packages/relay/wrangler.toml minus the production route and the cutover
+# proxy variable: with PASEO_RELAY_UPSTREAM unset the worker serves the
+# Durable Object directly.
+name = "paseo-menubar-test-relay"
+main = "node_modules/@getpaseo/relay/dist/cloudflare-adapter.js"
+compatibility_date = "2024-12-01"
+
+[[durable_objects.bindings]]
+name = "RELAY"
+class_name = "RelayDurableObject"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RelayDurableObject"]
