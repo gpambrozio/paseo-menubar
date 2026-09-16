@@ -34,7 +34,7 @@ public final class HostConnection {
         entry: HostEntry,
         sink: any HostSink,
         clock: any Clock<Duration>,
-        transportFactory: @escaping TransportFactory
+        transportFactory: @escaping TransportFactory = { URLSessionWebSocketTransport(request: $0) }
     ) throws {
         self.entry = entry
         self.sink = sink
