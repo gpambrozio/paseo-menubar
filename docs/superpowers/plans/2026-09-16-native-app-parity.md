@@ -590,8 +590,9 @@ Expected: `Test run with 17 tests in 2 suites passed`.
 
 - [ ] **Step 5: Mutate to prove the checksum tests bite**
 
-In `Binary.maskCrc`, change `&+ maskDelta` to `&+ 0`. Run the filter again.
-Expected: `masks the way LevelDB does` fails while the round-trip test still passes — which is exactly why both exist. Revert and confirm green.
+Change `maskDelta` from `0xa282_ead8` to `0x1111_1111`, so mask and unmask stay each other's inverse but neither is LevelDB's. Run the filter again.
+
+Expected: `masks the way LevelDB does, not merely in a way unmaskCrc undoes` fails, and the round-trip test still passes — which is exactly why both exist. A mutation that breaks only one direction (`&+ maskDelta` to `&+ 0`) fails both and proves nothing about their independence. Revert and confirm green.
 
 - [ ] **Step 6: Commit**
 
