@@ -34,7 +34,7 @@ Every Swift file, Node script, and test in this plan was written into a scratch 
 
 | Check | Result |
 | --- | --- |
-| Swift tests | 295 in 29 suites, all passing |
+| Swift tests | 296 in 29 suites, all passing (295 as written, plus one the Task 3 review added) |
 | Script tests (vitest) | 42 in 4 files, all passing |
 | Registry reader against the committed LevelDB fixtures | 112 tests, ported one-for-one from the TypeScript suites |
 | Fleet against a real `@getpaseo/server` 0.4.0 daemon | connected, menu rendered |
@@ -1437,7 +1437,7 @@ struct LocalStorageTests {
 - [ ] **Step 3: Run them**
 
 Run: `swift test --package-path PaseoIconPackage --filter 'SSTableTests|WALTests|LocalStorageTests'`
-Expected: `Test run with 27 tests in 3 suites passed`. If the fixture files were not copied in Task 2, every SSTable and WAL test fails on a missing resource; fix that rather than the code.
+Expected: `Test run with 27 tests in 3 suites passed`. (The review of this task added an eighth SSTable test for an oversized block handle; if you are re-running after that landed, it is 28 in 3.) If the fixture files were not copied in Task 2, every SSTable and WAL test fails on a missing resource; fix that rather than the code.
 
 - [ ] **Step 4: Mutate to prove the straddle and taint tests bite**
 
@@ -3673,7 +3673,7 @@ Then, in the `catch` of the same block, delete `appliedFingerprint = nil`. Expec
 - [ ] **Step 5: Run the whole suite**
 
 Run: `swift test --package-path PaseoIconPackage`
-Expected: `Test run with 191 tests in 20 suites passed`.
+Expected: `Test run with 192 tests in 20 suites passed`.
 
 - [ ] **Step 6: Commit**
 
@@ -5958,7 +5958,7 @@ Confirm green.
 - [ ] **Step 5: Run the whole suite**
 
 Run: `swift test --package-path PaseoIconPackage`
-Expected: `Test run with 293 tests in 28 suites passed`.
+Expected: `Test run with 294 tests in 28 suites passed`.
 
 - [ ] **Step 6: Commit**
 
@@ -6456,7 +6456,7 @@ Expected: `0`.
 - [ ] **Step 4: Run the whole suite**
 
 Run: `swift test --package-path PaseoIconPackage`
-Expected: `Test run with 293 tests in 28 suites passed`. The app target has no tests of its own by design: everything it could get wrong lives in the core, and what is left is wiring plus two AppKit calls.
+Expected: `Test run with 294 tests in 28 suites passed`. The app target has no tests of its own by design: everything it could get wrong lives in the core, and what is left is wiring plus two AppKit calls.
 
 - [ ] **Step 5: Commit**
 
@@ -6590,7 +6590,7 @@ Expected: `Test run with 2 tests in 1 suite passed`, in about half a second per 
 - [ ] **Step 3: Run everything, twice**
 
 Run: `swift test --package-path PaseoIconPackage && swift test --package-path PaseoIconPackage`
-Expected: `Test run with 295 tests in 29 suites passed` both times.
+Expected: `Test run with 296 tests in 29 suites passed` both times.
 
 Run: `npx vitest run && npm run typecheck`
 Expected: vitest green, typecheck silent. The Electron app is still here and still passing; nothing in Tasks 1 through 11 has touched it.
@@ -7218,7 +7218,7 @@ The command block becomes:
 ```bash
 SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm install   # Homebrew libvips breaks sharp's prebuild
 npm test                                    # vitest (scripts) + swift test
-swift test --package-path PaseoIconPackage  # 295 Swift tests, 29 suites
+swift test --package-path PaseoIconPackage  # 296 Swift tests, 29 suites
 npx vitest run                              # 42 tests, 4 files
 npm run typecheck
 npm run icons                               # tray glyphs and the app icon
@@ -7239,7 +7239,7 @@ npm run typecheck
 npx vitest run
 ```
 
-Expected: 295 Swift tests in 29 suites, 42 vitest tests in 4 files, typecheck silent. The vitest number is the scripts suites only; it drops from 269 because the Electron tests went with the Electron app, and that drop is the point rather than a regression.
+Expected: 296 Swift tests in 29 suites, 42 vitest tests in 4 files, typecheck silent. The vitest number is the scripts suites only; it drops from 269 because the Electron tests went with the Electron app, and that drop is the point rather than a regression.
 
 Confirm nothing references the deleted tree:
 
