@@ -111,9 +111,13 @@ injection, and is tested without an Electron harness.
 
 ```bash
 SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm install   # Homebrew libvips breaks sharp's prebuild
-npx vitest run                              # 256 tests, 17 files
+npx vitest run                              # 269 tests, 19 files
 npm run typecheck
 npm run fixtures:registry                   # regenerate LevelDB test fixtures
+npm run fixtures:e2ee                       # regenerate the tweetnacl E2EE vectors
+npm run test:swift                          # 76 Swift tests; needs npm install first
+PASEO_ICON_RELAY_E2E=1 npm run test:swift -- --filter RelayEndToEndTests   # after: npm install --prefix scripts/relay-harness
+swift run --package-path PaseoIconPackage PaseoIconProbe --offer '<pairing url>'   # relay check against a real host
 ```
 
 - **`classic-level` is a devDependency, used only by `fixtures:registry`.** It opens a
@@ -128,6 +132,12 @@ npm run fixtures:registry                   # regenerate LevelDB test fixtures
 - **Integration tests boot a real daemon** in-process from `@getpaseo/server`. They are
   slow by design. Always `listen: "127.0.0.1:0"` so the OS picks the port — a fixed port
   collides with the developer's own daemon on 6767.
+- **The native app lives in `PaseoIconPackage/` and does not touch the Electron
+  build.** Its integration tests spawn `node` for `scripts/swift-test-*.mjs`, so
+  the root `npm install` has to have run. `swift run PaseoIcon` writes no state.
+- **The relay end-to-end test is opt-in** because it needs `wrangler` from
+  `scripts/relay-harness`, installed separately. The daemon and echo harnesses
+  need nothing beyond the root install.
 
 ## Distribution
 

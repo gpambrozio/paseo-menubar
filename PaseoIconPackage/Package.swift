@@ -6,6 +6,7 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "PaseoIconCore", targets: ["PaseoIconCore"]),
+        .executable(name: "PaseoIcon", targets: ["PaseoIcon"]),
         .executable(name: "PaseoIconProbe", targets: ["PaseoIconProbe"]),
     ],
     dependencies: [
@@ -21,6 +22,7 @@ let package = Package(
             name: "PaseoIconCore",
             dependencies: [.product(name: "Sodium", package: "swift-sodium")]
         ),
+        .executableTarget(name: "PaseoIcon", dependencies: ["PaseoIconCore"]),
         .executableTarget(name: "PaseoIconProbe", dependencies: ["PaseoIconCore"]),
         .testTarget(
             name: "PaseoIconCoreTests",
