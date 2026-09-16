@@ -195,6 +195,27 @@ struct E2EEChannelTests {
         #expect(h.base.sentText.count == 1)
     }
 
+    @Test("connecting again after a close starts a fresh handshake and forwards the next close")
+    func reconnectResetsState() throws {
+        let h = try Harness()
+        h.base.simulateOpen()
+        h.channel.send(.text("queued on the first socket"))
+        h.base.simulateClose(code: 1006, reason: "gone")
+        #expect(h.recorder.closes.count == 1)
+
+        h.channel.connect()
+        h.base.simulateOpen()
+        let firstKey = try jsonObject(h.base.sentText[0])["key"] as? String
+        let secondKey = try jsonObject(try #require(h.base.sentText.last))["key"] as? String
+        #expect(secondKey != nil)
+        #expect(firstKey != secondKey, "a fresh key pair per socket")
+        h.ready()
+        #expect(h.base.sentText.count == 2, "the frame queued on the first socket is not replayed on the second")
+
+        h.base.simulateClose(code: 1006, reason: "gone again")
+        #expect(h.recorder.closes.count == 2)
+    }
+
     @Test("close passes the code and reason through to the base transport")
     func closePassesThrough() throws {
         let h = try Harness()

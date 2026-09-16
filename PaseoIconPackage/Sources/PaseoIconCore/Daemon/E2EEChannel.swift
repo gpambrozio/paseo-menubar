@@ -19,6 +19,7 @@ import Foundation
 /// ready means the peer is not encrypting; that is fatal (close 1011) so the
 /// session reconnects and re-handshakes rather than parsing someone else's
 /// traffic.
+/// A channel may be connected again after its base closed: `connect()` resets every per-socket field, so the next socket gets a fresh key pair and a fresh close.
 @MainActor
 public final class E2EEChannel: DaemonTransport {
     public static let handshakeRetryInterval: Duration = .seconds(1)
@@ -67,6 +68,13 @@ public final class E2EEChannel: DaemonTransport {
     public var isOpen: Bool { state == .open }
 
     public func connect() {
+        retryTask?.cancel()
+        retryTask = nil
+        closeForwarded = false
+        pendingSends = []
+        binaryCiphertext = false
+        sharedKey = nil
+        helloText = ""
         base.onOpen = { [weak self] in self?.handleBaseOpen() }
         base.onFrame = { [weak self] frame in self?.handleBaseFrame(frame) }
         base.onClose = { [weak self] close in self?.handleBaseClose(close) }
