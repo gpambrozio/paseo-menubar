@@ -185,7 +185,7 @@ public enum PaseoRegistry {
                     case "directTcp":
                         guard let endpoint = entry["endpoint"] as? String else { issues.append("\(prefix).endpoint: required"); continue }
                         var useTls = false
-                        if let raw = entry["useTls"] { if let flag = raw as? Bool { useTls = flag } else { issues.append("\(prefix).useTls: expected a boolean"); continue } }
+                        if let raw = entry["useTls"] { if let flag = PaseoRegistry.boolValue(raw) { useTls = flag } else { issues.append("\(prefix).useTls: expected a boolean"); continue } }
                         var password: String?
                         if let raw = entry["password"] { if let text = raw as? String { password = text } else { issues.append("\(prefix).password: expected a string"); continue } }
                         connections.append(Connection(id: id, type: type, dialable: .directTcp(endpoint: endpoint, useTls: useTls, password: password)))
@@ -193,7 +193,7 @@ public enum PaseoRegistry {
                         guard let endpoint = entry["relayEndpoint"] as? String else { issues.append("\(prefix).relayEndpoint: required"); continue }
                         guard let key = entry["daemonPublicKeyB64"] as? String else { issues.append("\(prefix).daemonPublicKeyB64: required"); continue }
                         var useTls: Bool?
-                        if let raw = entry["useTls"] { if let flag = raw as? Bool { useTls = flag } else { issues.append("\(prefix).useTls: expected a boolean"); continue } }
+                        if let raw = entry["useTls"] { if let flag = PaseoRegistry.boolValue(raw) { useTls = flag } else { issues.append("\(prefix).useTls: expected a boolean"); continue } }
                         connections.append(Connection(id: id, type: type, dialable: .relay(endpoint: endpoint, useTls: useTls, daemonPublicKeyB64: key)))
                     case "directSocket", "directPipe":
                         guard entry["path"] is String else { issues.append("\(prefix).path: required"); continue }
@@ -236,6 +236,16 @@ public enum PaseoRegistry {
             if let serverId = object["serverId"] as? String, !serverId.trimmingCharacters(in: .whitespaces).isEmpty { return serverId }
         }
         return "profile \(index + 1)"
+    }
+
+    /// `JSONSerialization` returns `NSNumber` for both booleans and integers,
+    /// and `as? Bool` bridges 0 and 1 as happily as false and true — so a
+    /// profile written with `"useTls": 1` would be accepted where the
+    /// published schema rejects it. `CFBoolean` is the only thing that is
+    /// really a boolean.
+    private static func boolValue(_ raw: Any) -> Bool? {
+        guard let number = raw as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else { return nil }
+        return number.boolValue
     }
 
     private static func posixName(_ code: Int32) -> String {

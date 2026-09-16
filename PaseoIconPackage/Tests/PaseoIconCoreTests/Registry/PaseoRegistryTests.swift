@@ -217,6 +217,20 @@ struct PaseoRegistryTests {
             try PaseoRegistry.hostEntries(fromJSON: "{{{")
         }
     }
+
+    @Test("rejects a boolean written as a number, as the published schema does")
+    func numericUseTls() throws {
+        let snapshot = try PaseoRegistry.hostEntries(fromJSON: try json([profile([
+            "label": "Numeric",
+            "connections": [["id": "d", "type": "directTcp", "endpoint": "10.0.0.9:6767", "useTls": 1]],
+            "preferredConnectionId": "d",
+        ])]))
+        // Foundation bridges NSNumber to Bool, so `as? Bool` would take this
+        // as `true` and dial TLS against a host the user never marked TLS.
+        #expect(snapshot.hosts.isEmpty)
+        #expect(try #require(snapshot.failures.first).contains("Numeric"))
+        #expect(try #require(snapshot.failures.first).contains("useTls"))
+    }
 }
 
 struct PaseoRegistryDirectoryTests {
