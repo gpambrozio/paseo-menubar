@@ -230,12 +230,18 @@ public final class E2EEChannel: DaemonTransport {
         onClose?(close)
     }
 
+    /// A fatal frame is reported to the owner as a 1011 close: emit the error, close the
+    /// base transport, then forward that close through `handleBaseClose` immediately.
+    /// `URLSessionWebSocketTransport` never calls `onClose` for a close it initiated
+    /// itself, so without this the owner would not learn of the disconnect until the
+    /// next liveness timeout.
     private func fail(_ message: String) {
         onError?(message)
         retryTask?.cancel()
         retryTask = nil
         state = .closed
         base.close(code: Self.fatalCloseCode, reason: message)
+        handleBaseClose(TransportClose(code: Self.fatalCloseCode, reason: message))
     }
 
     private static func parseHandshake(_ text: String) -> HandshakeMessage? {

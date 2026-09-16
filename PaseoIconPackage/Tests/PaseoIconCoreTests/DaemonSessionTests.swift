@@ -147,6 +147,30 @@ struct DaemonSessionTests {
         #expect(h.factory.transports.count == 3, "back to the base delay")
     }
 
+    @Test("the reconnect delay is capped at 30 seconds")
+    func backoffCap() async {
+        let h = Harness()
+        h.session.connect()
+        // Attempts 0 through 4 time out; their delays are 1.5, 3, 6, 12, and 24 seconds.
+        for delaySeconds in [1.5, 3.0, 6.0, 12.0, 24.0] {
+            await settle()
+            await h.clock.advance(by: .seconds(15))
+            await settle()
+            await h.clock.advance(by: .seconds(delaySeconds))
+            await settle()
+        }
+        #expect(h.factory.transports.count == 6)
+        await h.clock.advance(by: .seconds(15))
+        await settle()
+        #expect(h.session.connectionState == .disconnected(reason: "Connection timed out"))
+        await h.clock.advance(by: .seconds(29))
+        await settle()
+        #expect(h.factory.transports.count == 6, "1.5 s × 2^5 would be 48 s; the cap is 30 s")
+        await h.clock.advance(by: .seconds(1))
+        await settle()
+        #expect(h.factory.transports.count == 7)
+    }
+
     @Test("the close reason becomes the disconnected reason")
     func closeReason() {
         let h = Harness()
@@ -379,6 +403,30 @@ struct DaemonSessionTests {
         h.transport.simulateText(serverInfo)
         #expect(h.session.connectionState == .connected)
         #expect(h.session.lastServerInfo?.serverId == "relayed")
+    }
+
+    @Test("a fatal E2EE frame disconnects the session at once and reconnects after the base delay")
+    func relayFatalFrameReconnects() async throws {
+        let daemon = E2EEBox.generateKeyPair()
+        let h = Harness(e2eeKey: E2EEBox.exportPublicKey(daemon.publicKey))
+        h.session.connect()
+        let first = h.transport
+        first.simulateOpen()
+        let hello = try jsonObject(try #require(first.sentText.first))
+        let clientKey = try E2EEBox.importPublicKey(base64: try #require(hello["key"] as? String))
+        let shared = try E2EEBox.deriveSharedKey(ourSecretKey: daemon.secretKey, peerPublicKey: clientKey)
+        first.simulateText(#"{"type":"e2ee_ready","capabilities":{"binaryCiphertext":true}}"#)
+        let serverInfo = Data(try E2EEBox.encrypt(Array(DaemonWire.serverInfo(serverId: "relayed").utf8), with: shared)).base64EncodedString()
+        first.simulateText(serverInfo)
+        #expect(h.session.connectionState == .connected)
+
+        first.simulateText(#"{"type":"session","message":{"type":"pong"}}"#)
+        #expect(h.session.connectionState == .disconnected(reason: "Received plaintext frame on encrypted channel"))
+        #expect(first.closedWith?.code == 1011)
+        await settle()
+        await h.clock.advance(by: .milliseconds(1500))
+        await settle()
+        #expect(h.factory.transports.count == 2, "reconnects after the base delay, not after two liveness timeouts")
     }
 
     @Test("an invalid daemon key gives up without retrying")

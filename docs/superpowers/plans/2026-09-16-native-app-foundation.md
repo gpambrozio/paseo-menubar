@@ -922,6 +922,8 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ### Task 4: The transport protocol and the encrypted channel
 
+> **Amended after execution.** The `E2EEChannel.swift` block below is what the executor transcribed; two review fixes changed it afterwards. `connect()` now resets every per-socket field so a channel can be connected again (commit 63f92cd), and `fail(_:)` now forwards the 1011 close to the channel's owner through `handleBaseClose`, because a client-initiated close never comes back from `URLSessionWebSocketTransport` (final review fix). Read the committed file, not this block.
+
 **Files:**
 - Create: `PaseoIconPackage/Sources/PaseoIconCore/Daemon/DaemonTransport.swift`
 - Create: `PaseoIconPackage/Sources/PaseoIconCore/Daemon/E2EEChannel.swift`

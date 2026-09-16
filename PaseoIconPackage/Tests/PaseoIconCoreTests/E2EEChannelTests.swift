@@ -170,7 +170,11 @@ struct E2EEChannelTests {
         h.ready()
         h.base.simulateText(#"{"type":"session","message":{"type":"pong"}}"#)
         #expect(h.base.closedWith == TransportClose(code: 1011, reason: "Received plaintext frame on encrypted channel"))
+        #expect(h.recorder.closes == [TransportClose(code: 1011, reason: "Received plaintext frame on encrypted channel")])
+        #expect(h.recorder.errors == ["Received plaintext frame on encrypted channel"])
         #expect(h.recorder.frames.isEmpty)
+        h.base.simulateClose(code: 1011, reason: "Received plaintext frame on encrypted channel")
+        #expect(h.recorder.closes.count == 1, "a later report from the base is not forwarded twice")
     }
 
     @Test("a frame that fails to decrypt is fatal")
@@ -181,6 +185,8 @@ struct E2EEChannelTests {
         h.base.simulateText(Data([UInt8](repeating: 0, count: 60)).base64EncodedString())
         #expect(h.base.closedWith?.code == 1011)
         #expect(h.base.closedWith?.reason == "Decryption failed")
+        #expect(h.recorder.closes == [TransportClose(code: 1011, reason: "Decryption failed")])
+        #expect(h.recorder.errors == ["Decryption failed"])
     }
 
     @Test("forwards the base close once and stops retrying the hello")
