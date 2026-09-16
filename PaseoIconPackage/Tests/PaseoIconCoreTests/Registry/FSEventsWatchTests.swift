@@ -23,6 +23,12 @@ struct FSEventsWatchTests {
         try await Task.sleep(for: .milliseconds(600))
         let beforeRelevant = changes
 
+        // The filter is the whole job of `handle`: LOG is a file the registry
+        // reader never opens, and Chromium rewrites it constantly. Without this
+        // assertion the test passes even with the filename filter removed
+        // entirely — checked by mutation.
+        #expect(beforeRelevant == 0, "an event for a file the reader ignores must not trigger a re-read")
+
         try Data("y".utf8).write(to: dir.appendingPathComponent("000001.log"))
         #expect(await eventually(timeout: .seconds(10)) { changes > beforeRelevant })
         #expect(errors == 0)

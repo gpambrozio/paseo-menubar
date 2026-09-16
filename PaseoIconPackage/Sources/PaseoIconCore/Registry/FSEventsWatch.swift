@@ -17,6 +17,15 @@ public enum FSEventsWatchError: MessageError {
 /// directory deleted or replaced, which a reinstall does) is reported as the
 /// watch dying, so the watcher re-attaches on its next read.
 public enum FSEventsWatch {
+    /// Starts watching `directory` and returns the function that stops it.
+    ///
+    /// **The returned closure must be called.** The event stream holds the only
+    /// strong reference to its own state, so dropping the closure without
+    /// calling it leaves the stream scheduled and firing for the life of the
+    /// process. That is deliberate: the alternative — letting the object be
+    /// freed while the stream still points at it — is a use-after-free, which
+    /// is what this code did before. `RegistryWatcher` always calls it, either
+    /// on detach or via the root-change path, which stops the stream itself.
     @MainActor
     public static func open(directory: String, onChange: @escaping () -> Void, onError: @escaping () -> Void) throws -> () -> Void {
         let stream = try Stream(directory: directory, onChange: onChange, onError: onError)
@@ -25,10 +34,10 @@ public enum FSEventsWatch {
 
     @MainActor
     private final class Stream {
-        private nonisolated(unsafe) var ref: FSEventStreamRef?
+        private var ref: FSEventStreamRef?
         private let onChange: () -> Void
         private let onError: () -> Void
-        private nonisolated(unsafe) var stopped = false
+        private var stopped = false
 
         init(directory: String, onChange: @escaping () -> Void, onError: @escaping () -> Void) throws {
             self.onChange = onChange
@@ -82,16 +91,6 @@ public enum FSEventsWatch {
                 throw FSEventsWatchError.couldNotStart(directory)
             }
             ref = stream
-        }
-
-        deinit {
-            // Reachable only if every reference to the returned closure is
-            // dropped without calling it. `stop()` is @MainActor and deinit is
-            // not, so the teardown is inlined here.
-            guard let stream = ref, !stopped else { return }
-            FSEventStreamStop(stream)
-            FSEventStreamInvalidate(stream)
-            FSEventStreamRelease(stream)
         }
 
         func stop() {
