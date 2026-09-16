@@ -15,6 +15,8 @@ public final class URLSessionWebSocketTransport: DaemonTransport {
     private var session: URLSession?
     private var task: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
+    /// The tail of the send chain, so frames keep their order.
+    private var sendTail: Task<Void, Never> = Task {}
     private var closed = false
 
     public init(request: TransportRequest) {
@@ -47,6 +49,11 @@ public final class URLSessionWebSocketTransport: DaemonTransport {
         }
     }
 
+    /// Frames go out in the order they were handed over. `URLSessionWebSocketTask.send`
+    /// is async, and one unstructured `Task` per frame does not preserve
+    /// order: two sends can complete in either order, which on this wire would
+    /// let a `fetch_agents_request` overtake the `hello` that has to precede
+    /// it. Each send therefore awaits the previous one.
     public func send(_ frame: TransportFrame) {
         guard let task, !closed else {
             onError?("Transport not connected")
@@ -57,7 +64,9 @@ public final class URLSessionWebSocketTransport: DaemonTransport {
         case .text(let text): message = .string(text)
         case .binary(let bytes): message = .data(Data(bytes))
         }
-        Task { [weak self] in
+        let previous = sendTail
+        sendTail = Task { [weak self] in
+            await previous.value
             do {
                 try await task.send(message)
             } catch {
@@ -70,6 +79,7 @@ public final class URLSessionWebSocketTransport: DaemonTransport {
         guard !closed else { return }
         closed = true
         receiveTask?.cancel()
+        sendTail.cancel()
         let closeCode = URLSessionWebSocketTask.CloseCode(rawValue: code) ?? .normalClosure
         task?.cancel(with: closeCode, reason: reason.data(using: .utf8))
         session?.finishTasksAndInvalidate()

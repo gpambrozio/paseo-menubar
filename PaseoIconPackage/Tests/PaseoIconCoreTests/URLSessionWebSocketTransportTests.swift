@@ -51,6 +51,32 @@ struct URLSessionWebSocketTransportTests {
         #expect(recorder.close == TransportClose(code: 4401, reason: "Incorrect password"))
     }
 
+    @Test("keeps frames in the order they were handed over, under load")
+    func sendOrder() async throws {
+        let harness = try await NodeHarness(script: "swift-test-ws-echo.mjs")
+        defer { harness.stop() }
+        let port = try harness.int("port")
+        let transport = URLSessionWebSocketTransport(request: TransportRequest(url: URL(string: "ws://127.0.0.1:\(port)/")!))
+        let recorder = Recorder()
+        transport.onOpen = { recorder.opened = true }
+        transport.onFrame = { recorder.frames.append($0) }
+        transport.connect()
+        #expect(await eventually { recorder.opened && recorder.frames.count == 1 })
+
+        // One unstructured Task per frame does not preserve order: this fails
+        // without the send chain, reliably at this count, and intermittently
+        // at two frames under a busy machine.
+        let sent = (0..<40).map { "frame-\($0)" }
+        for text in sent { transport.send(.text(text)) }
+
+        #expect(await eventually { recorder.frames.count == sent.count + 1 })
+        let echoed = recorder.frames.dropFirst().compactMap { frame -> String? in
+            if case .text(let text) = frame { return text }
+            return nil
+        }
+        #expect(echoed == sent)
+    }
+
     @Test("a refused connection closes with 1006 and an error")
     func refused() async throws {
         let transport = URLSessionWebSocketTransport(request: TransportRequest(url: URL(string: "ws://127.0.0.1:1/")!))
