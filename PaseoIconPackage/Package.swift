@@ -6,6 +6,7 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "PaseoIconCore", targets: ["PaseoIconCore"]),
+        .executable(name: "PaseoIconProbe", targets: ["PaseoIconProbe"]),
     ],
     dependencies: [
         // Pinned exactly: the E2EE wire format is libsodium's crypto_box, and the
@@ -20,6 +21,7 @@ let package = Package(
             name: "PaseoIconCore",
             dependencies: [.product(name: "Sodium", package: "swift-sodium")]
         ),
+        .executableTarget(name: "PaseoIconProbe", dependencies: ["PaseoIconCore"]),
         .testTarget(
             name: "PaseoIconCoreTests",
             dependencies: [
