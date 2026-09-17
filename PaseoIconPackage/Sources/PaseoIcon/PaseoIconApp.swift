@@ -33,8 +33,10 @@ struct PaseoIconApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Set by the scene once both exist. Quitting from the menu calls `stop()`
-    /// itself, but logging out, shutting down, and a `SIGTERM` from outside all
-    /// bypass that row — the Electron build caught those with `before-quit`.
+    /// itself; logging out and shutting down bypass that row, and the Electron
+    /// build caught them with `before-quit`. A raw `SIGTERM` still gets neither,
+    /// because AppKit installs no handler for it — the sockets close with the
+    /// process instead.
     weak var coordinator: AppCoordinator?
 
     func applicationWillTerminate(_ notification: Notification) {

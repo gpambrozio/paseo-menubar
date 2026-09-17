@@ -25,15 +25,20 @@ enum TrayIcons {
         // the 16pt box is what makes AppKit choose by scale rather than size.
         let box = NSSize(width: 16, height: 16)
         let image = NSImage(size: box)
+        // Both are required, not merely preferred. The generator writes the
+        // pair in one pass, so a half-written set means a half-run generator —
+        // and accepting the survivor would put 1x art on a Retina menu bar
+        // silently, which is the failure this whole change exists to remove.
         for suffix in ["", "@2x"] {
-            guard let url = Bundle.module.url(forResource: "\(name)Template\(suffix)", withExtension: "png", subdirectory: "TrayIcons"),
-                  let rep = NSImageRep(contentsOf: url) else { continue }
+            let file = "\(name)Template\(suffix)"
+            guard let url = Bundle.module.url(forResource: file, withExtension: "png", subdirectory: "TrayIcons"),
+                  let rep = NSImageRep(contentsOf: url) else {
+                throw TrayIconError.missing(file)
+            }
             rep.size = box
             image.addRepresentation(rep)
         }
-        guard !image.representations.isEmpty, image.isValid else {
-            throw TrayIconError.missing(name)
-        }
+        guard image.isValid else { throw TrayIconError.missing("\(name)Template") }
         image.isTemplate = true
         cache[bucket] = image
         return image
@@ -51,7 +56,7 @@ enum TrayIconError: MessageError {
 
     var message: String {
         switch self {
-        case .missing(let name): "Missing tray icon: \(name)Template.png. Run `npm run icons`."
+        case .missing(let file): "Missing tray icon: \(file).png. Run `npm run icons`."
         }
     }
 }

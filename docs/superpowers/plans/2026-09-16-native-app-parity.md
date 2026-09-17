@@ -6110,15 +6110,20 @@ enum TrayIcons {
         // the 16pt box is what makes AppKit choose by scale rather than size.
         let box = NSSize(width: 16, height: 16)
         let image = NSImage(size: box)
+        // Both are required, not merely preferred. The generator writes the
+        // pair in one pass, so a half-written set means a half-run generator —
+        // and accepting the survivor would put 1x art on a Retina menu bar
+        // silently, which is the failure this whole change exists to remove.
         for suffix in ["", "@2x"] {
-            guard let url = Bundle.module.url(forResource: "\(name)Template\(suffix)", withExtension: "png", subdirectory: "TrayIcons"),
-                  let rep = NSImageRep(contentsOf: url) else { continue }
+            let file = "\(name)Template\(suffix)"
+            guard let url = Bundle.module.url(forResource: file, withExtension: "png", subdirectory: "TrayIcons"),
+                  let rep = NSImageRep(contentsOf: url) else {
+                throw TrayIconError.missing(file)
+            }
             rep.size = box
             image.addRepresentation(rep)
         }
-        guard !image.representations.isEmpty, image.isValid else {
-            throw TrayIconError.missing(name)
-        }
+        guard image.isValid else { throw TrayIconError.missing("\(name)Template") }
         image.isTemplate = true
         cache[bucket] = image
         return image
@@ -6136,7 +6141,7 @@ enum TrayIconError: MessageError {
 
     var message: String {
         switch self {
-        case .missing(let name): "Missing tray icon: \(name)Template.png. Run `npm run icons`."
+        case .missing(let file): "Missing tray icon: \(file).png. Run `npm run icons`."
         }
     }
 }
@@ -6417,7 +6422,8 @@ final class AppCoordinator {
             } catch {
                 // Cancelled by `stop()`. Swallowing this with `try?` would let
                 // the rebuild run anyway, which is not what cancelling means.
-                // Clearing the handle keeps a later `start()` able to schedule.
+                // The handle is cleared so it does not outlive the task it
+                // names; `start()` is one-shot, so nothing reschedules after.
                 self?.rebuildTask = nil
                 return
             }
@@ -6505,8 +6511,10 @@ struct PaseoIconApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Set by the scene once both exist. Quitting from the menu calls `stop()`
-    /// itself, but logging out, shutting down, and a `SIGTERM` from outside all
-    /// bypass that row — the Electron build caught those with `before-quit`.
+    /// itself; logging out and shutting down bypass that row, and the Electron
+    /// build caught them with `before-quit`. A raw `SIGTERM` still gets neither,
+    /// because AppKit installs no handler for it — the sockets close with the
+    /// process instead.
     weak var coordinator: AppCoordinator?
 
     func applicationWillTerminate(_ notification: Notification) {

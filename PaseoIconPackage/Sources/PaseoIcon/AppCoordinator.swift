@@ -148,7 +148,8 @@ final class AppCoordinator {
             } catch {
                 // Cancelled by `stop()`. Swallowing this with `try?` would let
                 // the rebuild run anyway, which is not what cancelling means.
-                // Clearing the handle keeps a later `start()` able to schedule.
+                // The handle is cleared so it does not outlive the task it
+                // names; `start()` is one-shot, so nothing reschedules after.
                 self?.rebuildTask = nil
                 return
             }
