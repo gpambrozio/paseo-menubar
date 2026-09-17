@@ -14,8 +14,11 @@ public enum MenuItem: Equatable, Sendable, Identifiable {
     /// renders one overflow row where the menu needs two.
     case overflow(bucket: WorkspaceStateBucket, label: String)
     case separator(index: Int)
-    /// A row that does nothing but say something.
-    case note(String)
+    /// A row that does nothing but say something. It is numbered for the same
+    /// reason the overflow rows carry their bucket: two hosts whose display
+    /// names resolve alike produce byte-identical truncation text, and two
+    /// rows sharing an identity means SwiftUI draws one of them.
+    case note(index: Int, text: String)
     /// The fix for every configuration error is in the Paseo app.
     case configError(detail: String)
     case hostStatus(hostId: String, label: String, retryable: Bool)
@@ -29,7 +32,7 @@ public enum MenuItem: Equatable, Sendable, Identifiable {
         case .workspace(let row, _): "row:\(row.id)"
         case .overflow(let bucket, _): "overflow:\(bucket.rawValue)"
         case .separator(let index): "sep:\(index)"
-        case .note(let text): "note:\(text)"
+        case .note(let index, _): "note:\(index)"
         case .configError: "configError"
         case .hostStatus(let hostId, _, _): "host:\(hostId)"
         case .openApp: "openApp"
@@ -60,6 +63,11 @@ public enum MenuModel {
     public static func build(_ model: TrayViewModel, loginItemEnabled: Bool) -> [MenuItem] {
         var items: [MenuItem] = []
         var separators = 0
+        var notes = 0
+        func note(_ text: String) {
+            items.append(.note(index: notes, text: text))
+            notes += 1
+        }
         func separator() {
             items.append(.separator(index: separators))
             separators += 1
@@ -71,7 +79,7 @@ public enum MenuModel {
         }
 
         if model.sections.isEmpty {
-            items.append(.note("No workspaces"))
+            note("No workspaces")
         } else {
             // A rule between sections, not before the first: AppKit draws a
             // leading separator as a stray line under the menu's top edge.
@@ -88,12 +96,12 @@ public enum MenuModel {
         // The seed page has a ceiling. Reaching it means these rows are a
         // subset, and a subset presented as the whole list is a silent cap.
         for label in model.truncatedHosts {
-            items.append(.note("Not all workspaces shown · \(label)"))
+            note("Not all workspaces shown · \(label)")
         }
         // A capped agent page costs click targets rather than rows: a
         // workspace whose agents fell off the page opens in the browser.
         for label in model.agentIndexTruncatedHosts {
-            items.append(.note("Not all agents loaded · \(label)"))
+            note("Not all agents loaded · \(label)")
         }
 
         if !model.hostStatuses.isEmpty {

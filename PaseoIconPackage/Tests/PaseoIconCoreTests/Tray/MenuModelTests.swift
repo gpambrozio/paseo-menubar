@@ -38,7 +38,7 @@ struct MenuModelTests {
     }
 
     private func notes(_ items: [MenuItem]) -> [String] {
-        items.compactMap { if case .note(let text) = $0 { text } else { nil } }
+        items.compactMap { if case .note(_, let text) = $0 { text } else { nil } }
     }
 
     private func headings(_ items: [MenuItem]) -> [String] {
@@ -186,6 +186,16 @@ struct MenuModelTests {
         // Quit is last, and the login item reflects the state it was given.
         #expect(items.last == .quit)
         #expect(!build(model(), loginItemEnabled: false).contains(.loginItem(enabled: true)))
+    }
+
+    @Test("keeps two identical truncation notices apart")
+    func duplicateNoteIds() {
+        // Two hosts the user named the same thing, both truncated. The rows
+        // read identically, so an id built from the text alone would make
+        // SwiftUI draw one and drop the other's notice — a silent cap.
+        let items = build(model(truncatedHosts: ["laptop", "laptop"]))
+        #expect(notes(items).filter { $0 == "Not all workspaces shown · laptop" }.count == 2)
+        #expect(Set(items.map(\.id)).count == items.count)
     }
 
     @Test("gives every item a distinct identity, so SwiftUI does not collapse two rows")

@@ -16,12 +16,25 @@ enum TrayIcons {
     static func image(for bucket: WorkspaceStateBucket) throws -> NSImage {
         if let cached = cache[bucket] { return cached }
         let name = TrayViewModelBuilder.iconNames[bucket] ?? bucket.rawValue
-        guard let url = Bundle.module.url(forResource: "\(name)Template", withExtension: "png", subdirectory: "TrayIcons"),
-              let image = NSImage(contentsOf: url), image.isValid, image.size.width > 0 else {
+        // Both rasterizations, not just the 1x one. `NSImage(contentsOf:)` on a
+        // single file yields a single representation, so a Retina menu bar
+        // would draw 16px art in a 32px box for every user; Electron's
+        // `nativeImage.createFromPath` picked the `@2x` sibling up by itself
+        // and nothing here does. The PNGs also carry a 288-DPI pHYs chunk, so
+        // each representation loads claiming to be 4pt square — pinning both to
+        // the 16pt box is what makes AppKit choose by scale rather than size.
+        let box = NSSize(width: 16, height: 16)
+        let image = NSImage(size: box)
+        for suffix in ["", "@2x"] {
+            guard let url = Bundle.module.url(forResource: "\(name)Template\(suffix)", withExtension: "png", subdirectory: "TrayIcons"),
+                  let rep = NSImageRep(contentsOf: url) else { continue }
+            rep.size = box
+            image.addRepresentation(rep)
+        }
+        guard !image.representations.isEmpty, image.isValid else {
             throw TrayIconError.missing(name)
         }
         image.isTemplate = true
-        image.size = NSSize(width: 16, height: 16)
         cache[bucket] = image
         return image
     }

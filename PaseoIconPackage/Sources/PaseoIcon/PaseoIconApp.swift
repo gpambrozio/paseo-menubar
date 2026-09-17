@@ -17,12 +17,30 @@ struct PaseoIconApp: App {
             )
         } label: {
             MenuBarLabel(icon: coordinator.model.icon, count: coordinator.model.count)
-                .task { coordinator.start() }
+                .task {
+                    // The delegate is created by AppKit and cannot reach the
+                    // scene's state on its own; this is the one place both
+                    // exist. Weakly held there, so nothing is kept alive by it.
+                    appDelegate.coordinator = coordinator
+                    coordinator.start()
+                }
         }
+        // Stated rather than left to `.automatic`: the window style would put a
+        // panel on screen, and this app must never create a window.
+        .menuBarExtraStyle(.menu)
     }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Set by the scene once both exist. Quitting from the menu calls `stop()`
+    /// itself, but logging out, shutting down, and a `SIGTERM` from outside all
+    /// bypass that row — the Electron build caught those with `before-quit`.
+    weak var coordinator: AppCoordinator?
+
+    func applicationWillTerminate(_ notification: Notification) {
+        coordinator?.stop()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // No dock icon; this app is the menu bar item. The bundle sets
         // LSUIElement too, but `swift run` has no Info.plist.
@@ -43,6 +61,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let alert = NSAlert()
             alert.messageText = "Paseo Icon — failed to start"
             alert.informativeText = errorText(error)
+            // An accessory app is not frontmost, so without this the alert can
+            // open behind every other window while the main thread sits in its
+            // modal loop: no menu bar item, nothing to click, nothing to quit.
+            NSApp.activate()
             alert.runModal()
             NSApplication.shared.terminate(nil)
         }

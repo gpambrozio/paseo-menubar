@@ -38,7 +38,17 @@ final class AppCoordinator {
             }
         )
         session = RegistrySession(
-            readRegistry: { try PaseoRegistry.read(appSupportDir: Self.applicationSupportDirectory()) },
+            // Detached on purpose. A closure formed in a `@MainActor` init is
+            // isolated to the main actor, so awaiting it would run the whole
+            // read — listing the directory, verifying every block's CRC32C,
+            // decompressing snappy — between two frames of the menu bar. The
+            // TypeScript this ports was async over `fs/promises` and never had
+            // that problem.
+            readRegistry: {
+                try await Task.detached {
+                    try PaseoRegistry.read(appSupportDir: Self.applicationSupportDirectory())
+                }.value
+            },
             watch: { [weak self] onChange in self?.watcher.watch(onChange) ?? {} },
             applyConfig: { [weak self] config in self?.fleet.apply(config) },
             onConfigError: { [weak self] message in self?.store.setConfigError(message) },
@@ -124,13 +134,24 @@ final class AppCoordinator {
     // MARK: - Internals
 
     private func refreshLoginItem() {
-        loginItemEnabled = SMAppService.mainApp.status == .enabled
+        let enabled = SMAppService.mainApp.status == .enabled
+        // Guarded, because this runs on every rebuild and an unconditional
+        // write invalidates every observer whether or not anything changed.
+        if enabled != loginItemEnabled { loginItemEnabled = enabled }
     }
 
     private func scheduleRebuild() {
         guard rebuildTask == nil else { return }
         rebuildTask = Task { [weak self] in
-            try? await Task.sleep(for: Self.rebuildDebounce)
+            do {
+                try await Task.sleep(for: Self.rebuildDebounce)
+            } catch {
+                // Cancelled by `stop()`. Swallowing this with `try?` would let
+                // the rebuild run anyway, which is not what cancelling means.
+                // Clearing the handle keeps a later `start()` able to schedule.
+                self?.rebuildTask = nil
+                return
+            }
             guard let self else { return }
             self.rebuildTask = nil
             self.rebuild()
@@ -138,6 +159,10 @@ final class AppCoordinator {
     }
 
     private func rebuild() {
+        // Re-read on every rebuild, the way the Electron menu re-read it on
+        // every render. The switch lives in System Settings, outside this app,
+        // so a checkmark that only updates on relaunch is simply wrong.
+        refreshLoginItem()
         model = TrayViewModelBuilder.build(hosts: store.snapshot(), configError: store.getConfigError())
     }
 

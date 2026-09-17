@@ -31,7 +31,7 @@ struct MenuContent: View {
             case .separator:
                 Divider()
 
-            case .note(let text):
+            case .note(_, let text):
                 Text(text)
 
             case .configError(let detail):
@@ -49,9 +49,14 @@ struct MenuContent: View {
                 Button("Open Paseo") { coordinator.openApp() }
 
             case .loginItem(let enabled):
-                Button(enabled ? "✓ Start at login" : "Start at login") {
-                    coordinator.setLoginItem(!enabled)
-                }
+                // A Toggle, not a Button with a tick in its title: inside a
+                // menu SwiftUI draws it in the checkmark column, which is what
+                // Electron's `type: "checkbox"` gave, and it reports a checked
+                // state to VoiceOver where a prefixed character reports none.
+                Toggle("Start at login", isOn: Binding(
+                    get: { enabled },
+                    set: { coordinator.setLoginItem($0) }
+                ))
 
             case .quit:
                 Button("Quit Paseo Icon") { coordinator.quit() }
