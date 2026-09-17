@@ -325,10 +325,29 @@ struct ResolveHostNameTests {
         #expect(tiers(label: nil, hostname: "") == "srv-id")
     }
 
-    @Test("renders an explicit label verbatim, suffix and all")
-    func labelVerbatim() {
-        // A user who types `foo.local` means it; only the reported hostname is shortened.
-        #expect(tiers(label: "foo.local") == "foo.local")
+    @Test("shortens the label the same way it shortens the hostname")
+    func labelShortened() {
+        // The label comes from the Paseo desktop app's profile, whose default
+        // is the machine's mDNS name, so it carries the same suffix and gets
+        // the same treatment.
+        #expect(tiers(label: "foo.local") == "foo")
+        #expect(tiers(label: "foo.localdomain") == "foo")
+        #expect(tiers(label: "FOO.LOCAL") == "FOO")
+        // Still only at the end, and still only as a whole label.
+        #expect(tiers(label: "mylocal") == "mylocal")
+        #expect(tiers(label: "box.local.example.com") == "box.local.example.com")
+    }
+
+    @Test("falls through rather than rendering a label that is nothing but a suffix")
+    func labelNeverEmpty() {
+        #expect(tiers(label: ".local") == "live-hostname")
+    }
+
+    @Test("leaves the endpoint alone, because it is an address and not a name")
+    func endpointVerbatim() {
+        // The last resort names what the tray dials. Trimming it would show a
+        // string that is not the address, and IPv6 literals and ports live here.
+        #expect(resolveHostName(label: nil, hostname: nil, serverId: nil, endpointHint: "build-box.local:6767") == "build-box.local:6767")
     }
 }
 
@@ -354,6 +373,19 @@ struct TrayViewModelHostNamingTests {
             workspacesTruncated: true
         )])
         #expect(model.truncatedHosts == ["build-box"])
+    }
+
+    @Test("drops the mDNS suffix from a registry label in both the host lines and the rows")
+    func labelSuffixEverywhere() {
+        // The two places a host name is shown. The label is the Paseo desktop
+        // app's, whose default is the machine's mDNS name, so this is the one
+        // that actually reaches most menus.
+        let model = TrayViewModelBuilder.build(hosts: [
+            Fixture.host([Fixture.workspace("w1")], label: "build-box.local", serverId: "srv-1"),
+            Fixture.host(hostId: "h2", label: "studio.localdomain", serverId: "srv-2"),
+        ])
+        #expect(model.hostStatuses.map(\.label) == ["build-box", "studio"])
+        #expect(model.sections.first?.rows.first?.hostLabel == "build-box")
     }
 
     @Test("uses the resolved name for the per-row host label with more than one host")
