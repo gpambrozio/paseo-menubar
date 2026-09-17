@@ -7030,7 +7030,7 @@ In `"scripts"`, add:
 - [ ] **Step 5: Run the tests**
 
 Run: `npx vitest run scripts/native-bundle.test.mjs`
-Expected: `Tests  11 passed (11)`.
+Expected: `Tests  12 passed (12)`.
 
 Run: `npx vitest run`
 Expected: all green. `check-cask-macos.test.mjs` still passes because `:sonoma` is in its symbol table.
