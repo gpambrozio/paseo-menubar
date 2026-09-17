@@ -4067,8 +4067,10 @@ public final class HostFleet {
         let fingerprint = hostsFingerprint(config.hosts)
         if fingerprint == appliedFingerprint { return }
         // Recorded only once the fleet is actually built. Claiming it up front
-        // meant a rebuild that died partway still looked applied.
-        appliedFingerprint = ""
+        // meant a rebuild that died partway still looked applied. `nil` rather
+        // than empty for the same reason the declaration is optional: `""` is a
+        // value `hostsFingerprint` can return.
+        appliedFingerprint = nil
 
         closeAll()
         appliedHosts.removeAll()
@@ -5628,9 +5630,16 @@ public enum MenuModel {
         // A bucket this build does not know, named rather than dropped. Sorted
         // only so the menu is stable between rebuilds: the order carries no
         // ranking, because ranking these is what this build cannot do.
-        for status in model.unknownStates.keys.sorted() {
-            let count = model.unknownStates[status] ?? 0
+        // Capped like a section, and the remainder named rather than dropped: a
+        // daemon whose vocabulary this build wholly fails to recognise could
+        // otherwise put one row here for every workspace it sent.
+        let unknown = model.unknownStates.sorted { $0.key < $1.key }
+        for (status, count) in unknown.prefix(TrayViewModelBuilder.sectionRowCap) {
             note("\(count) workspace\(count == 1 ? "" : "s") in a state this version cannot show · \(status)")
+        }
+        if unknown.count > TrayViewModelBuilder.sectionRowCap {
+            let left = unknown.count - TrayViewModelBuilder.sectionRowCap
+            note("…and \(left) more state\(left == 1 ? "" : "s") this version cannot show")
         }
 
         // The seed page has a ceiling. Reaching it means these rows are a
@@ -6001,6 +6010,19 @@ struct MenuModelTests {
             "1 workspace in a state this version cannot show · quarantined",
         ])
         #expect(Set(items.map(\.id)).count == items.count)
+    }
+
+    @Test("caps the unknown-state rows and says how many states it left out")
+    func unknownStateRowsCapped() {
+        // Sixteen distinct states this build cannot place. The menu shows the
+        // same fifteen a section would and names the remainder, rather than
+        // growing a row per state without limit.
+        var states: [String: Int] = [:]
+        for index in 0..<16 { states[String(format: "state%02d", index)] = 1 }
+        let rows = notes(build(model(unknownStates: states)))
+        #expect(rows.count == 16)
+        #expect(rows.first == "1 workspace in a state this version cannot show · state00")
+        #expect(rows.last == "…and 1 more state this version cannot show")
     }
 
     @Test("does not claim there are no workspaces when the only ones are unknown")
