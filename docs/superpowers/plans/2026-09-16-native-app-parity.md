@@ -5390,8 +5390,12 @@ public enum MenuItem: Equatable, Sendable, Identifiable {
     /// A disabled section heading carrying its bucket's icon.
     case sectionHeading(bucket: WorkspaceStateBucket, label: String)
     case workspace(row: TrayWorkspaceRow, label: String)
-    /// The capped rows are only reachable in the app, so this opens it.
-    case overflow(count: Int, label: String)
+    /// The capped rows are only reachable in the app, so this opens it. It
+    /// carries its section's bucket rather than the count it dropped, because
+    /// the count is already in the label and two sections that overflow by the
+    /// same number would otherwise share an identity — which is how SwiftUI
+    /// renders one overflow row where the menu needs two.
+    case overflow(bucket: WorkspaceStateBucket, label: String)
     case separator(index: Int)
     /// A row that does nothing but say something.
     case note(String)
@@ -5406,7 +5410,7 @@ public enum MenuItem: Equatable, Sendable, Identifiable {
         switch self {
         case .sectionHeading(let bucket, _): "heading:\(bucket.rawValue)"
         case .workspace(let row, _): "row:\(row.id)"
-        case .overflow(let count, _): "overflow:\(count)"
+        case .overflow(let bucket, _): "overflow:\(bucket.rawValue)"
         case .separator(let index): "sep:\(index)"
         case .note(let text): "note:\(text)"
         case .configError: "configError"
@@ -5459,7 +5463,7 @@ public enum MenuModel {
                 items.append(.sectionHeading(bucket: section.bucket, label: TrayViewModelBuilder.sectionLabels[section.bucket] ?? section.bucket.rawValue))
                 items.append(contentsOf: section.rows.map { .workspace(row: $0, label: rowLabel($0)) })
                 if section.overflow > 0 {
-                    items.append(.overflow(count: section.overflow, label: "…and \(section.overflow) more"))
+                    items.append(.overflow(bucket: section.bucket, label: "…and \(section.overflow) more"))
                 }
             }
         }
@@ -5821,8 +5825,14 @@ struct MenuModelTests {
     func distinctIds() {
         let items = build(model(
             sections: [
+                // Both sections overflow by the same number on purpose: the
+                // two rows then carry the same label, and only the bucket
+                // tells them apart. An id built from the count alone collapses
+                // them, and the Failed section loses its overflow row while
+                // still hiding rows — a silent cap by another route.
                 TrayMenuSection(bucket: .needsInput, rows: [row(), row(workspaceId: "w2")], overflow: 2),
-                TrayMenuSection(bucket: .done, rows: [row(workspaceId: "w3")], overflow: 0),
+                TrayMenuSection(bucket: .failed, rows: [row(workspaceId: "w3")], overflow: 2),
+                TrayMenuSection(bucket: .done, rows: [row(workspaceId: "w4")], overflow: 0),
             ],
             hostStatuses: [TrayHostStatus(hostId: "h1", label: "laptop", status: .connected)],
             truncatedHosts: ["laptop"],
