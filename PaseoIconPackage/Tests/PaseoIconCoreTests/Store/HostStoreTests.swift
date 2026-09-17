@@ -162,6 +162,38 @@ struct HostStoreTests {
         #expect(store.snapshot().isEmpty)
     }
 
+    @Test("keeps workspaces in the order the daemon seeded them")
+    func preservesDaemonOrder() {
+        let store = seeded()
+        // The daemon ranks these by status_priority and the menu caps each
+        // section at 15 rows, so re-sorting here would show a different 15 than
+        // the Paseo sidebar does. Ids chosen to sort the opposite way.
+        store.seedWorkspaces("h1", [Fixture.workspace("zebra"), Fixture.workspace("apple"), Fixture.workspace("middle")], truncated: false)
+        #expect(store.snapshot().first?.workspaces.map(\.id) == ["zebra", "apple", "middle"])
+        store.seedAgents("h1", [Fixture.agent("zulu"), Fixture.agent("alpha")], truncated: false)
+        #expect(store.snapshot().first?.agents.map(\.id) == ["zulu", "alpha"])
+    }
+
+    @Test("an upsert keeps a workspace where it was, and a new one goes on the end")
+    func upsertKeepsPosition() {
+        let store = seeded()
+        store.seedWorkspaces("h1", [Fixture.workspace("b"), Fixture.workspace("a")], truncated: false)
+        // Updating in place must not promote a row up the menu, and a row that
+        // arrives later must not jump the queue.
+        store.applyWorkspaceUpdate("h1", .upsert(Fixture.workspace("b", status: "needs_input")))
+        store.applyWorkspaceUpdate("h1", .upsert(Fixture.workspace("c")))
+        #expect(store.snapshot().first?.workspaces.map(\.id) == ["b", "a", "c"])
+        #expect(store.snapshot().first?.workspaces.first?.status == "needs_input")
+    }
+
+    @Test("removing a workspace closes the gap without disturbing the rest")
+    func removeKeepsOrder() {
+        let store = seeded()
+        store.seedWorkspaces("h1", [Fixture.workspace("b"), Fixture.workspace("a"), Fixture.workspace("c")], truncated: false)
+        store.applyWorkspaceUpdate("h1", .remove(id: "a"))
+        #expect(store.snapshot().first?.workspaces.map(\.id) == ["b", "c"])
+    }
+
     @Test("keeps hosts in the order they were registered, not a dictionary's order")
     func registrationOrder() {
         let store = HostStore()

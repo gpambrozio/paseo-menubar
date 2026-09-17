@@ -54,8 +54,8 @@ public struct WorkspaceDescriptor: Codable, Equatable, Sendable {
         id: String,
         projectId: String = "p1",
         projectDisplayName: String = "paseo",
-        name: String? = nil,
-        status: String? = nil,
+        name: String,
+        status: String,
         archivingAt: String? = nil,
         activityAt: String? = nil,
         diffStat: DiffStat? = nil
@@ -63,8 +63,8 @@ public struct WorkspaceDescriptor: Codable, Equatable, Sendable {
         self.id = id
         self.projectId = projectId
         self.projectDisplayName = projectDisplayName
-        self.name = name ?? id
-        self.status = status ?? "done"
+        self.name = name
+        self.status = status
         self.archivingAt = archivingAt
         self.activityAt = activityAt
         self.diffStat = diffStat
@@ -85,9 +85,9 @@ public struct AgentSnapshot: Codable, Equatable, Sendable {
     public init(
         id: String,
         workspaceId: String? = nil,
-        status: String? = nil,
+        status: String,
         title: String? = nil,
-        updatedAt: String? = nil,
+        updatedAt: String,
         requiresAttention: Bool? = nil,
         attentionReason: String? = nil,
         archivedAt: String? = nil,
@@ -95,9 +95,9 @@ public struct AgentSnapshot: Codable, Equatable, Sendable {
     ) {
         self.id = id
         self.workspaceId = workspaceId
-        self.status = status ?? "idle"
+        self.status = status
         self.title = title
-        self.updatedAt = updatedAt ?? "2026-08-16T00:00:00.000Z"
+        self.updatedAt = updatedAt
         self.requiresAttention = requiresAttention
         self.attentionReason = attentionReason
         self.archivedAt = archivedAt

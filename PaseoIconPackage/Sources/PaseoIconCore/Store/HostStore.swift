@@ -1,5 +1,44 @@
 import Foundation
 
+/// A dictionary that remembers insertion order, with the same rule a
+/// JavaScript `Map` follows: updating an existing key keeps its position, a
+/// new key goes on the end. The Electron store held a `Map`, and the order it
+/// preserved is the daemon's own ranking — `fetch_workspaces_request` sorts by
+/// `status_priority` and the tray renders that order, capped. Sorting here by
+/// anything else would be a client-side derivation of which workspaces matter,
+/// which is the one thing this design forbids.
+struct InsertionOrderedMap<Value> {
+    private var storage: [String: Value] = [:]
+    private var order: [String] = []
+
+    var values: [Value] { order.compactMap { storage[$0] } }
+
+    subscript(key: String) -> Value? {
+        get { storage[key] }
+        set {
+            if let newValue {
+                if storage.updateValue(newValue, forKey: key) == nil { order.append(key) }
+            } else if storage.removeValue(forKey: key) != nil {
+                order.removeAll { $0 == key }
+            }
+        }
+    }
+
+    @discardableResult
+    mutating func removeValue(forKey key: String) -> Value? {
+        guard let removed = storage.removeValue(forKey: key) else { return nil }
+        order.removeAll { $0 == key }
+        return removed
+    }
+
+    /// Replaces everything, in the given order.
+    mutating func replaceAll(_ pairs: [(String, Value)]) {
+        storage = Dictionary(pairs, uniquingKeysWith: { _, last in last })
+        var seen = Set<String>()
+        order = pairs.map(\.0).filter { seen.insert($0).inserted }
+    }
+}
+
 /// One host's replicated state. Two lists, because they answer two different
 /// questions: `workspaces` is what the menu shows, the same unit and the same
 /// daemon-computed bucket the Paseo sidebar renders, and `agents` exists only
@@ -33,8 +72,8 @@ public final class HostStore: HostSink {
         var endpointHint: String
         var status: HostStatus
         var serverId: String?
-        var workspaces: [String: WorkspaceDescriptor] = [:]
-        var agents: [String: AgentSnapshot] = [:]
+        var workspaces = InsertionOrderedMap<WorkspaceDescriptor>()
+        var agents = InsertionOrderedMap<AgentSnapshot>()
         var workspacesTruncated = false
         var agentsTruncated = false
         /// Insertion order, so the menu's host rows follow config order rather
@@ -104,7 +143,7 @@ public final class HostStore: HostSink {
     /// strand a dead row.
     public func seedAgents(_ hostId: String, _ agents: [AgentSnapshot], truncated: Bool) {
         guard var host = hosts[hostId] else { return }
-        host.agents = Dictionary(agents.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+        host.agents.replaceAll(agents.map { ($0.id, $0) })
         host.agentsTruncated = truncated
         hosts[hostId] = host
         emit()
@@ -113,7 +152,7 @@ public final class HostStore: HostSink {
     /// Replaces the host's workspaces wholesale. Same rule as `seedAgents`.
     public func seedWorkspaces(_ hostId: String, _ workspaces: [WorkspaceDescriptor], truncated: Bool) {
         guard var host = hosts[hostId] else { return }
-        host.workspaces = Dictionary(workspaces.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+        host.workspaces.replaceAll(workspaces.map { ($0.id, $0) })
         host.workspacesTruncated = truncated
         hosts[hostId] = host
         emit()
@@ -154,8 +193,9 @@ public final class HostStore: HostSink {
                 endpointHint: host.endpointHint,
                 status: host.status,
                 serverId: host.serverId,
-                workspaces: host.workspaces.values.sorted { $0.id < $1.id },
-                agents: host.agents.values.sorted { $0.id < $1.id },
+                // The daemon's own order, not one invented here.
+                workspaces: host.workspaces.values,
+                agents: host.agents.values,
                 workspacesTruncated: host.workspacesTruncated,
                 agentsTruncated: host.agentsTruncated
             )
