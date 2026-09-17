@@ -192,8 +192,14 @@ struct MenuModelTests {
     func distinctIds() {
         let items = build(model(
             sections: [
+                // Both sections overflow by the same number on purpose: the
+                // two rows then carry the same label, and only the bucket
+                // tells them apart. An id built from the count alone collapses
+                // them, and the Failed section loses its overflow row while
+                // still hiding rows — a silent cap by another route.
                 TrayMenuSection(bucket: .needsInput, rows: [row(), row(workspaceId: "w2")], overflow: 2),
-                TrayMenuSection(bucket: .done, rows: [row(workspaceId: "w3")], overflow: 0),
+                TrayMenuSection(bucket: .failed, rows: [row(workspaceId: "w3")], overflow: 2),
+                TrayMenuSection(bucket: .done, rows: [row(workspaceId: "w4")], overflow: 0),
             ],
             hostStatuses: [TrayHostStatus(hostId: "h1", label: "laptop", status: .connected)],
             truncatedHosts: ["laptop"],
