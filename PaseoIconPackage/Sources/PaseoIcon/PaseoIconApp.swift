@@ -8,12 +8,21 @@ import SwiftUI
 struct PaseoIconApp: App {
     @NSApplicationDelegateAdaptor private var appDelegate: AppDelegate
     @State private var coordinator = AppCoordinator()
+    /// Collapsed by default: the host block answers "is everything connected?"
+    /// in one line, and the names behind it are the follow-up question. Scene
+    /// state, so the answer survives the panel closing.
+    @State private var hostsExpanded = false
 
     var body: some Scene {
         MenuBarExtra {
             MenuContent(
-                items: MenuModel.build(coordinator.model, loginItemEnabled: coordinator.loginItemEnabled),
-                coordinator: coordinator
+                items: MenuModel.build(
+                    coordinator.model,
+                    loginItemEnabled: coordinator.loginItemEnabled,
+                    hostsExpanded: hostsExpanded
+                ),
+                coordinator: coordinator,
+                toggleHosts: { hostsExpanded.toggle() }
             )
         } label: {
             MenuBarLabel(

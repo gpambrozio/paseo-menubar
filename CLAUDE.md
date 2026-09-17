@@ -66,7 +66,7 @@ app that no agent can see.
 | `PaseoIconCore/Launch/OpenPaseo.swift` | Deep links, with the browser fallback. |
 | `PaseoIcon/TrayIcons.swift` | The five bucket glyphs as template images. |
 | `PaseoIcon/MenuBarLabel.swift` | The rendered menu bar item: glyph plus count. |
-| `PaseoIcon/MenuContent.swift` | Renders `[MenuItem]` as the panel's rows, plus the metrics they share. Decides nothing. |
+| `PaseoIcon/MenuContent.swift` | Renders `[MenuItem]` as the panel's rows, the metrics they share, and the shrink the panel will not do for itself. Decides nothing. |
 | `PaseoIcon/AppCoordinator.swift` | The object graph, login item, alerts, `NSWorkspace`. |
 | `PaseoIcon/PaseoIconApp.swift` | The `MenuBarExtra` scene and the app delegate. |
 
