@@ -697,6 +697,15 @@ public enum SSTable {
         let value: ArraySlice<UInt8>
     }
 
+    /// A block handle's offset and size arrive as 64-bit varints from bytes we
+    /// do not control — the footer carries no checksum of its own. Converting
+    /// one straight to `Int` traps uncatchably above `Int64.max`, so the range
+    /// check happens here, before the value is used, and reports as damage.
+    private static func handleValue(_ raw: UInt64) throws -> Int {
+        guard let value = Int(exactly: raw) else { throw SSTableError.blockPastEnd }
+        return value
+    }
+
     /// Every record for `userKey` in one `.ldb`. Uses the index block to visit
     /// only the data blocks whose range can contain the key. A key can appear
     /// more than once with different sequence numbers, so this returns all
@@ -715,7 +724,7 @@ public enum SSTable {
             let handleBytes = Array(indexEntry.value)
             let offset = try Binary.readVarint64(handleBytes, at: 0)
             let size = try Binary.readVarint64(handleBytes, at: offset.next)
-            let dataBlock = try readBlock(file, BlockHandle(offset: Int(offset.value), size: Int(size.value)))
+            let dataBlock = try readBlock(file, BlockHandle(offset: try handleValue(offset.value), size: try handleValue(size.value)))
 
             for entry in try blockEntries(dataBlock) {
                 let parsed = try splitInternalKey(entry.key)
@@ -748,13 +757,22 @@ public enum SSTable {
         pos = try Binary.readVarint64(footer, at: pos).next
         let offset = try Binary.readVarint64(footer, at: pos)
         let size = try Binary.readVarint64(footer, at: offset.next)
-        return BlockHandle(offset: Int(offset.value), size: Int(size.value))
+        return BlockHandle(offset: try handleValue(offset.value), size: try handleValue(size.value))
     }
 
     /// Reads one block, verifying its checksum before anything parses it.
     private static func readBlock(_ file: [UInt8], _ handle: BlockHandle) throws -> [UInt8] {
-        let end = handle.offset + handle.size + blockTrailerLength
-        guard handle.offset >= 0, handle.size >= 0, end <= file.count else { throw SSTableError.blockPastEnd }
+        // Bounded by subtraction, never by adding the three together. The
+        // conversion above stops a handle that will not fit in an `Int`, but
+        // `Int.max` fits, and `offset + size + trailer` on it overflows and
+        // traps — uncatchably, taking the whole app, where the TypeScript's
+        // doubles merely produced a number too large and threw. The file's own
+        // length is the bound, and nothing here can exceed it.
+        guard handle.offset >= 0, handle.size >= 0,
+              handle.size <= file.count - blockTrailerLength,
+              handle.offset <= file.count - blockTrailerLength - handle.size else {
+            throw SSTableError.blockPastEnd
+        }
         let contents = file[handle.offset..<(handle.offset + handle.size)]
         let compression = file[handle.offset + handle.size]
         let storedCrc = Binary.readUInt32LE(file, at: handle.offset + handle.size + 1)
@@ -1200,6 +1218,65 @@ struct SSTableTests {
         for i in 0..<4 { bytes[compressionByte + 1 + i] = UInt8((masked >> (8 * UInt32(i))) & 0xff) }
         #expect(throws: SSTableError.unsupportedCompression(99)) {
             try SSTable.find(in: bytes, userKey: key)
+        }
+    }
+
+    @Test("refuses a block handle too large for the platform's Int rather than trapping")
+    func oversizedBlockHandle() throws {
+        // The footer has no checksum, so a file whose magic survives while its
+        // handle bytes are corrupted reaches the conversion. A ten-byte varint
+        // encoding 2^63 is above Int.max, and `Int(_:)` on it would trap the
+        // process rather than throw.
+        var bytes = try RegistryFixtures.tableBytes("compacted")
+        var huge: [UInt8] = []
+        var value: UInt64 = 1 << 63
+        while value > 0x7f {
+            huge.append(UInt8(value & 0x7f) | 0x80)
+            value >>= 7
+        }
+        huge.append(UInt8(value))
+
+        // Rewrite the footer: two zero varints for the metaindex handle, then
+        // the oversized index handle, then the magic, padded to 48 bytes.
+        var footer: [UInt8] = [0x00, 0x00] + huge + [0x01]
+        footer += [UInt8](repeating: 0, count: 40 - footer.count)
+        footer += [0x57, 0xfb, 0x80, 0x8b, 0x24, 0x75, 0x47, 0xdb]
+        #expect(footer.count == 48)
+        bytes.replaceSubrange((bytes.count - 48)..., with: footer)
+
+        #expect(throws: SSTableError.blockPastEnd) {
+            try SSTable.find(in: bytes, userKey: RegistryFixtures.registryKey)
+        }
+    }
+
+    @Test("refuses a handle whose end overflows, rather than trapping on the addition")
+    func blockEndOverflows() throws {
+        // The test above stops a handle that will not fit in an `Int`. This one
+        // is the line after: 2^63-1 converts exactly, so the conversion lets it
+        // through, and `offset + size + trailer` is what overflows. Same
+        // unchecked footer bytes, and the failure is worse than a wrong answer —
+        // an overflow traps uncatchably, so the menu bar item disappears with no
+        // error row and nothing to click, on every launch, until Chromium
+        // compacts the file away.
+        var bytes = try RegistryFixtures.tableBytes("compacted")
+        var huge: [UInt8] = []
+        var value = UInt64(Int.max)
+        while value > 0x7f {
+            huge.append(UInt8(value & 0x7f) | 0x80)
+            value >>= 7
+        }
+        huge.append(UInt8(value))
+
+        // Metaindex handle of two zero varints, then this index handle at
+        // offset 2^63-1 with size 0, then the magic, padded to 48 bytes.
+        var footer: [UInt8] = [0x00, 0x00] + huge + [0x00]
+        footer += [UInt8](repeating: 0, count: 40 - footer.count)
+        footer += [0x57, 0xfb, 0x80, 0x8b, 0x24, 0x75, 0x47, 0xdb]
+        #expect(footer.count == 48)
+        bytes.replaceSubrange((bytes.count - 48)..., with: footer)
+
+        #expect(throws: SSTableError.blockPastEnd) {
+            try SSTable.find(in: bytes, userKey: RegistryFixtures.registryKey)
         }
     }
 }
@@ -3965,7 +4042,11 @@ public final class HostFleet {
     /// The unusable entries behind the caller's error row, keyed by entry id
     /// so a retry can clear its own without disturbing the other hosts'.
     private var entryFailures: [(id: String, message: String)] = []
-    private var appliedFingerprint = ""
+    /// Optional rather than empty: `hostsFingerprint` returns `""` if encoding
+    /// ever fails, and an empty initial value would make that first apply a
+    /// silent no-op — no hosts, no error row, nothing to click. Nothing can be
+    /// equal to "not applied yet".
+    private var appliedFingerprint: String?
 
     public init(
         store: HostStore,
@@ -4785,6 +4866,33 @@ public struct TrayViewModel: Equatable, Sendable {
     public let agentIndexTruncatedHosts: [String]
     /// Set when the registry cannot be used; the last known-good fleet keeps running.
     public let configError: String?
+    /// Workspaces whose `status` this build does not recognise, counted by the
+    /// string the daemon sent. A newer daemon can add a bucket, and the spec is
+    /// explicit that one this build does not know "renders as an unknown row,
+    /// never a crash and never a guess" — dropping them would make a fleet of
+    /// live workspaces read as an empty one. Nothing here decides which bucket
+    /// they belong in; that decision lives in the daemon.
+    public let unknownStates: [String: Int]
+
+    init(
+        icon: TrayIconState,
+        count: Int,
+        sections: [TrayMenuSection],
+        hostStatuses: [TrayHostStatus],
+        truncatedHosts: [String],
+        agentIndexTruncatedHosts: [String],
+        configError: String?,
+        unknownStates: [String: Int] = [:]
+    ) {
+        self.icon = icon
+        self.count = count
+        self.sections = sections
+        self.hostStatuses = hostStatuses
+        self.truncatedHosts = truncatedHosts
+        self.agentIndexTruncatedHosts = agentIndexTruncatedHosts
+        self.configError = configError
+        self.unknownStates = unknownStates
+    }
 
     public static let empty = TrayViewModel(
         icon: .done, count: 0, sections: [], hostStatuses: [],
@@ -4832,6 +4940,7 @@ public enum TrayViewModelBuilder {
         let live = hosts.filter { $0.status == .connected }
 
         var rowsByBucket: [WorkspaceStateBucket: [TrayWorkspaceRow]] = [:]
+        var unknownStates: [String: Int] = [:]
         var counted = 0
 
         for host in live {
@@ -4843,7 +4952,14 @@ public enum TrayViewModelBuilder {
                 // it: the sidebar renders the same field, and a second
                 // derivation is a second answer. A bucket this build does not
                 // know is dropped rather than guessed at.
-                guard let bucket = workspace.bucket else { continue }
+                guard let bucket = workspace.bucket else {
+                    // A bucket this build does not know. Counted so the menu
+                    // can say so, because a silent drop turns a busy fleet into
+                    // an apparently empty one, and never sorted into a bucket
+                    // here — that would be the guess the rule forbids.
+                    unknownStates[workspace.status, default: 0] += 1
+                    continue
+                }
                 let row = TrayWorkspaceRow(
                     hostId: host.hostId,
                     serverId: host.serverId,
@@ -4874,7 +4990,10 @@ public enum TrayViewModelBuilder {
             hostStatuses: hosts.map { TrayHostStatus(hostId: $0.hostId, label: resolveHostName($0), status: $0.status) },
             truncatedHosts: live.filter(\.workspacesTruncated).map(resolveHostName),
             agentIndexTruncatedHosts: live.filter(\.agentsTruncated).map(resolveHostName),
-            configError: configError
+            configError: configError,
+            // Left out of `icon` and `count` on purpose: whether an unknown
+            // state needs attention is exactly what this build cannot know.
+            unknownStates: unknownStates
         )
     }
 
@@ -5039,16 +5158,46 @@ struct TrayViewModelTests {
         #expect(model.count == 1)
     }
 
-    @Test("drops a workspace whose bucket this build has never heard of, rather than guessing")
+    @Test("names a bucket this build has never heard of, rather than guessing or dropping it")
     func unknownBucket() {
-        // The daemon is not version-pinned. A bucket it adds tomorrow must
-        // cost that row, not the menu, and must never be counted or iconed.
+        // The daemon is not version-pinned. A bucket it adds tomorrow must not
+        // be sorted into one of these five, counted, or put on the icon — all
+        // three would be the guess the rule forbids. It must also not vanish:
+        // the spec's words are "renders as an unknown row", and three live
+        // workspaces reading as an empty fleet is the silent cap in another
+        // costume.
         let model = build([Fixture.host([
             Fixture.workspace("w1", status: "brand_new_bucket"),
             Fixture.workspace("w2", status: "needs_input"),
         ])])
         #expect(model.sections.map(\.bucket) == [.needsInput])
         #expect(model.count == 1)
+        #expect(model.unknownStates == ["brand_new_bucket": 1])
+    }
+
+    @Test("counts each unknown state separately, and keeps them off the icon")
+    func unknownBucketsCounted() {
+        let model = build([Fixture.host([
+            Fixture.workspace("w1", status: "blocked"),
+            Fixture.workspace("w2", status: "blocked"),
+            Fixture.workspace("w3", status: "quarantined"),
+        ])])
+        #expect(model.unknownStates == ["blocked": 2, "quarantined": 1])
+        #expect(model.sections.isEmpty)
+        // Whether an unknown state needs attention is the one thing this build
+        // cannot work out, so it reaches neither the glyph nor the badge.
+        #expect(model.icon == .done)
+        #expect(model.count == 0)
+    }
+
+    @Test("leaves an archived workspace out of the unknown count too")
+    func unknownBucketArchiving() {
+        // Archiving is checked before the bucket, so a row on its way out does
+        // not turn into a complaint about an unknown state.
+        let model = build([Fixture.host([
+            Fixture.workspace("w1", status: "blocked", archivingAt: "2026-08-16T00:00:00.000Z"),
+        ])])
+        #expect(model.unknownStates.isEmpty)
     }
 
     @Test("excludes workspaces being archived from counts and rows")
@@ -5461,7 +5610,7 @@ public enum MenuModel {
             separator()
         }
 
-        if model.sections.isEmpty {
+        if model.sections.isEmpty, model.unknownStates.isEmpty {
             note("No workspaces")
         } else {
             // A rule between sections, not before the first: AppKit draws a
@@ -5474,6 +5623,14 @@ public enum MenuModel {
                     items.append(.overflow(bucket: section.bucket, label: "…and \(section.overflow) more"))
                 }
             }
+        }
+
+        // A bucket this build does not know, named rather than dropped. Sorted
+        // only so the menu is stable between rebuilds: the order carries no
+        // ranking, because ranking these is what this build cannot do.
+        for status in model.unknownStates.keys.sorted() {
+            let count = model.unknownStates[status] ?? 0
+            note("\(count) workspace\(count == 1 ? "" : "s") in a state this version cannot show · \(status)")
         }
 
         // The seed page has a ceiling. Reaching it means these rows are a
@@ -5661,7 +5818,8 @@ struct MenuModelTests {
         hostStatuses: [TrayHostStatus] = [],
         truncatedHosts: [String] = [],
         agentIndexTruncatedHosts: [String] = [],
-        configError: String? = nil
+        configError: String? = nil,
+        unknownStates: [String: Int] = [:]
     ) -> TrayViewModel {
         TrayViewModel(
             icon: .done,
@@ -5670,7 +5828,8 @@ struct MenuModelTests {
             hostStatuses: hostStatuses,
             truncatedHosts: truncatedHosts,
             agentIndexTruncatedHosts: agentIndexTruncatedHosts,
-            configError: configError
+            configError: configError,
+            unknownStates: unknownStates
         )
     }
 
@@ -5827,6 +5986,30 @@ struct MenuModelTests {
         // Quit is last, and the login item reflects the state it was given.
         #expect(items.last == .quit)
         #expect(!build(model(), loginItemEnabled: false).contains(.loginItem(enabled: true)))
+    }
+
+    @Test("names a bucket this build does not know, one row per state")
+    func unknownStateRows() {
+        let items = build(model(
+            sections: [TrayMenuSection(bucket: .done, rows: [row()], overflow: 0)],
+            unknownStates: ["quarantined": 1, "blocked": 3]
+        ))
+        // Sorted only for stability, and each row names its own state and count
+        // so the user can tell that their Paseo is ahead of this tray.
+        #expect(notes(items) == [
+            "3 workspaces in a state this version cannot show · blocked",
+            "1 workspace in a state this version cannot show · quarantined",
+        ])
+        #expect(Set(items.map(\.id)).count == items.count)
+    }
+
+    @Test("does not claim there are no workspaces when the only ones are unknown")
+    func unknownStatesAreNotNoWorkspaces() {
+        // The rows exist; this build just cannot place them. Saying "No
+        // workspaces" here would be the lie the count fix exists to prevent.
+        let items = build(model(unknownStates: ["blocked": 2]))
+        #expect(!notes(items).contains("No workspaces"))
+        #expect(notes(items) == ["2 workspaces in a state this version cannot show · blocked"])
     }
 
     @Test("keeps two identical truncation notices apart")
