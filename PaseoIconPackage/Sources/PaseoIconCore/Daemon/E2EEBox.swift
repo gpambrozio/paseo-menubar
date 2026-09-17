@@ -18,6 +18,7 @@ public enum E2EEBoxError: Error, Equatable {
     case bundleTooShort(Int)
     case decryptionFailed
     case encryptionFailed
+    case keyGenerationFailed
 }
 
 /// The relay's end-to-end encryption primitive, byte-compatible with
@@ -38,10 +39,13 @@ public enum E2EEBox {
     public static let macLength = 16
     public static var overheadLength: Int { nonceLength + macLength }
 
-    public static func generateKeyPair() -> E2EEKeyPair {
+    public static func generateKeyPair() throws -> E2EEKeyPair {
         // libsodium's keypair generation only fails before sodium_init, which
-        // Sodium() performs; a nil here is unreachable.
-        let pair = Sodium().box.keyPair()!
+        // Sodium() performs, so this is unreachable — but "no force unwraps" has
+        // no exceptions, and the caller already has a failure path for key
+        // derivation two lines further on. A nil here would otherwise be a dead
+        // menu bar rather than a named error.
+        guard let pair = Sodium().box.keyPair() else { throw E2EEBoxError.keyGenerationFailed }
         return E2EEKeyPair(publicKey: pair.publicKey, secretKey: pair.secretKey)
     }
 

@@ -20,14 +20,17 @@ public struct OpenAgentTarget: Equatable, Sendable {
 }
 
 public struct OpenWorkspaceTarget: Equatable, Sendable {
-    public let serverId: String
+    /// Nil until the host's `server_info` has arrived. Optional here rather
+    /// than guarded at the call site, so the "we cannot build a link yet" case
+    /// sits beside the two fallbacks it is a sibling of, under test.
+    public let serverId: String?
     public let workspaceId: String
     /// The workspace's most relevant agent, chosen by the view model, or nil.
     public let agentId: String?
     /// Daemon HTTP base URL. Direct hosts have one; relay hosts do not.
     public let webBaseUrl: String?
 
-    public init(serverId: String, workspaceId: String, agentId: String?, webBaseUrl: String? = nil) {
+    public init(serverId: String?, workspaceId: String, agentId: String?, webBaseUrl: String? = nil) {
         self.serverId = serverId
         self.workspaceId = workspaceId
         self.agentId = agentId
@@ -83,9 +86,15 @@ public enum OpenPaseo {
     /// separate repository and this app cannot change that, so a workspace is
     /// opened through one of its agents.
     public static func workspace(_ target: OpenWorkspaceTarget, desktopAppInstalled: Bool) -> OpenTarget {
+        // No `server_info` yet, so there is nothing to build either link out of.
+        // Opening Paseo itself beats swallowing the click.
+        guard let serverId = target.serverId else {
+            return app(webBaseUrl: target.webBaseUrl, desktopAppInstalled: desktopAppInstalled)
+        }
+
         if let agentId = target.agentId {
             return agent(
-                OpenAgentTarget(serverId: target.serverId, agentId: agentId, webBaseUrl: target.webBaseUrl),
+                OpenAgentTarget(serverId: serverId, agentId: agentId, webBaseUrl: target.webBaseUrl),
                 desktopAppInstalled: desktopAppInstalled
             )
         }
@@ -95,7 +104,7 @@ public enum OpenPaseo {
         // preferred over `paseo://` even with the desktop app installed, which
         // would only bring Paseo forward at whatever it happened to be showing.
         if let webBaseUrl = target.webBaseUrl,
-           let url = URL(string: trimSlashes(webBaseUrl) + "/h/\(encode(target.serverId))/workspace/\(encode(target.workspaceId))") {
+           let url = URL(string: trimSlashes(webBaseUrl) + "/h/\(encode(serverId))/workspace/\(encode(target.workspaceId))") {
             return .url(url)
         }
 

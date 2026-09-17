@@ -29,8 +29,11 @@ enum LogBuilder {
     }
 
     /// A write batch: 8-byte base sequence, 4-byte count, then the records.
-    static func batch(_ records: [[UInt8]]) -> [UInt8] {
-        var header: [UInt8] = [1, 0, 0, 0, 0, 0, 0, 0]
+    /// `baseSequence` is a parameter because the header's high words come
+    /// straight off disk and nothing signs this file, so they are reachable
+    /// input rather than an internal detail.
+    static func batch(_ records: [[UInt8]], baseSequence: UInt64 = 1) -> [UInt8] {
+        var header: [UInt8] = (0..<8).map { UInt8((baseSequence >> (8 * $0)) & 0xff) }
         let count = UInt32(records.count)
         header += [UInt8(count & 0xff), UInt8((count >> 8) & 0xff), UInt8((count >> 16) & 0xff), UInt8(count >> 24)]
         return header + records.flatMap { $0 }
@@ -165,4 +168,43 @@ struct WALTests {
         #expect(!scan.records.contains { $0.value == decoyValue })
         #expect(scan.records.isEmpty)
     }
+    @Test("refuses a batch whose base sequence would overflow, rather than trapping")
+    func sequenceOverflow() throws {
+        // The two header words are raw little-endian bytes, so a batch can
+        // declare UInt64.max. `baseSequence + UInt64(index)` on the second
+        // record then overflows, and a Swift overflow traps uncatchably: the
+        // menu bar item disappears with nothing to click. The CRC does not
+        // protect against this — it is computed over whatever bytes are there,
+        // so anything able to write under the Paseo app's storage produces it
+        // deterministically. The evidence this test works is a crashed test
+        // process, not a failed expectation.
+        let batch = LogBuilder.batch(
+            [LogBuilder.writeRecord(key: myKey, value: Array("a".utf8)),
+             LogBuilder.writeRecord(key: myKey, value: Array("b".utf8))],
+            baseSequence: UInt64.max
+        )
+        let scan = try WAL.find(in: LogBuilder.physical(LogBuilder.typeFull, batch), userKey: myKey)
+        #expect(scan.records.isEmpty)
+        // Refused, not silently skipped: the tray has to be able to say the log
+        // lost something.
+        #expect(scan.droppedFragments == 1)
+    }
+
+    @Test("a batch truncated mid-record keeps the batches already read out of the file")
+    func truncatedBatchKeepsEarlierOnes() throws {
+        // A length that runs off the end used to throw, and the throw reached
+        // LevelDBReader, which counts the whole file as damage — discarding
+        // every good batch before it, possibly the newest registry write.
+        let good = LogBuilder.physical(
+            LogBuilder.typeFull,
+            LogBuilder.batch([LogBuilder.writeRecord(key: myKey, value: Array("kept".utf8))])
+        )
+        // A batch whose only record stops immediately after its type byte, so
+        // the key's varint has nothing to read.
+        let truncated = LogBuilder.physical(LogBuilder.typeFull, LogBuilder.batch([[1]], baseSequence: 9))
+        let scan = try WAL.find(in: good + truncated, userKey: myKey)
+        #expect(scan.records.map { String(decoding: $0.value, as: UTF8.self) } == ["kept"])
+        #expect(scan.droppedFragments == 1)
+    }
+
 }

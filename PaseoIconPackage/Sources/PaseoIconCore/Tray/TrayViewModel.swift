@@ -17,7 +17,12 @@ public struct TrayWorkspaceRow: Equatable, Sendable, Identifiable {
     /// Nil when only one host is configured.
     public let hostLabel: String?
 
-    public var id: String { "\(hostId)/\(workspaceId)" }
+    // A NUL separator rather than a slash. `hostId` is the daemon's `serverId`,
+    // copied verbatim out of another app's storage and never character-checked,
+    // so a slash in it would make ("a/b", "c") and ("a", "b/c") the same row —
+    // and a row-identity collision is the silent cap this project has already
+    // fixed twice. NUL cannot appear in either component.
+    public var id: String { "\(hostId)\u{0}\(workspaceId)" }
 }
 
 public struct TrayMenuSection: Equatable, Sendable, Identifiable {

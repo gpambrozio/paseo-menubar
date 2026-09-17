@@ -299,4 +299,18 @@ struct HostFleetTests {
         h.fleet.closeAll()
         #expect(h.connections.leaked.isEmpty)
     }
+    @Test("a host that could not be dialled leaves no row behind once it is gone")
+    func failedHostRowIsSwept() throws {
+        let h = Harness(failOn: ["bad"])
+        h.fleet.apply(AppConfig.unvalidated(hosts: [Fixture.directEntry("good"), Fixture.directEntry("bad")]))
+        #expect(h.store.snapshot().map(\.hostId).sorted() == ["bad", "good"])
+
+        // The user deletes the undialable host in the Paseo app. Only
+        // `close()` removed a store row, and this host never had a connection
+        // to close, so its row used to survive every later apply — a ghost with
+        // no explanation and no retry until the app was relaunched.
+        h.fleet.apply(AppConfig.unvalidated(hosts: [Fixture.directEntry("good")]))
+        #expect(h.store.snapshot().map(\.hostId) == ["good"])
+    }
+
 }

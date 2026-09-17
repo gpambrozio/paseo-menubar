@@ -199,6 +199,13 @@ public final class DaemonSession {
     private func attemptConnect() {
         guard connectionState != .disposed, shouldReconnect else { return }
         if case .connecting = connectionState { return }
+        // An armed backoff timer has to go before a new attempt starts. The
+        // guard above only covers `.connecting`, so a caller invoking the public
+        // `connect()` while the state is `.disconnected` would leave the timer
+        // running: it fires later, passes its own guards, and disposes the
+        // transport that has meanwhile reached `.connected`, dropping the seed.
+        reconnectTask?.cancel()
+        reconnectTask = nil
 
         var headers: [String: String] = [:]
         var subprotocols: [String] = []

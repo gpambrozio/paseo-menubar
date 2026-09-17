@@ -128,8 +128,9 @@ public final class E2EEChannel: DaemonTransport {
 
     private func handleBaseOpen() {
         guard state == .idle else { return }
-        let pair = E2EEBox.generateKeyPair()
+        let pair: E2EEKeyPair
         do {
+            pair = try E2EEBox.generateKeyPair()
             sharedKey = try E2EEBox.deriveSharedKey(ourSecretKey: pair.secretKey, peerPublicKey: daemonPublicKey)
         } catch {
             fail("E2EE key derivation failed: \(error)")

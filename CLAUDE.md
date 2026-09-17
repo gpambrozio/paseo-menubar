@@ -275,6 +275,15 @@ so plainly rather than narrating a check you did not perform.
 - **CI has never run green.** The workflows moved to `macos-15` because
   `swift-tools-version: 6.1` is unreadable by the Xcode 15 that `macos-14` carries, but
   with no secrets and no successful run, the toolchain floor on the runner is unverified.
+- **A profile with one malformed known connection is dropped whole, even when a sibling
+  connection in it is dialable.** The registry-sync design doc says a profile the tray
+  cannot parse "is dropped and named in the error row like a host with no usable
+  connection", so this is the specified behaviour and it costs only that host. The risk it
+  carries is aggregate rather than local: the desktop app is not version-pinned, so if a
+  future Paseo restructures a `directTcp` field, every profile carrying one becomes
+  unreadable at once — and most carry one, so the tray goes to zero hosts. An unknown
+  connection *type* already reduces to "unusable" instead, which is the shape the fix would
+  take. Changing it means changing the design doc first.
 - Releases are `arm64` only — the packaging script builds for the host arch, so there is no
   Intel or universal artifact.
 - There is no auto-updater, and the script writes no update metadata. Adding one means

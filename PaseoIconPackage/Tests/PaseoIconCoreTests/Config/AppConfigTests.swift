@@ -9,7 +9,7 @@ struct AppConfigTests {
         .directTcp(id: id, label: label ?? id, endpoint: endpoint, useTls: false, password: nil)
     }
 
-    private func relay(_ id: String, endpoint: String = "relay.paseo.sh:443", key: String = "AAAA") -> HostEntry {
+    private func relay(_ id: String, endpoint: String = "relay.paseo.sh:443", key: String = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=") -> HostEntry {
         .relay(id: id, label: "studio", offer: ConnectionOffer(serverId: "srv-\(id)", daemonPublicKeyB64: key, relay: .init(endpoint: endpoint, useTls: true)))
     }
 
@@ -77,7 +77,7 @@ struct AppConfigTests {
     @Test("the fingerprint notices a change inside a nested offer")
     func nestedChange() {
         #expect(hostsFingerprint([relay("r", endpoint: "a:443")]) != hostsFingerprint([relay("r", endpoint: "b:443")]))
-        #expect(hostsFingerprint([relay("r", key: "AAAA")]) != hostsFingerprint([relay("r", key: "BBBB")]))
+        #expect(hostsFingerprint([relay("r", key: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=")]) != hostsFingerprint([relay("r", key: "f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f38=")]))
     }
 
     @Test("the fingerprint notices a change to a field the encoder writes last")

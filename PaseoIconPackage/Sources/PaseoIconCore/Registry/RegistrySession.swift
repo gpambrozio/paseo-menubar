@@ -94,6 +94,13 @@ public final class RegistrySession {
         debounceTask = nil
         pollTask?.cancel()
         pollTask = nil
+        // The read chain too. On quit `AppCoordinator.stop()` closes the fleet
+        // while a read may still be awaiting its detached LevelDB work; when it
+        // resumed it called `applyConfig` and rebuilt every connection during
+        // teardown. The process is going away either way, but shutdown should
+        // mean what it says.
+        chain?.cancel()
+        chain = nil
         stopWatching?()
         stopWatching = nil
     }

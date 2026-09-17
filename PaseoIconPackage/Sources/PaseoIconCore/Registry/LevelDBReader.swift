@@ -113,7 +113,10 @@ public enum LevelDBReader {
                 continue
             }
 
-            for record in records where result.winner == nil || record.sequence > result.winner!.sequence {
+            // `map ?? true` rather than `== nil ||` and a force unwrap: `||`
+            // short-circuits so the unwrap was safe, but that is a fact the next
+            // reader has to re-derive, and the house rule has no exceptions.
+            for record in records where result.winner.map({ record.sequence > $0.sequence }) ?? true {
                 result.winner = record
             }
         }

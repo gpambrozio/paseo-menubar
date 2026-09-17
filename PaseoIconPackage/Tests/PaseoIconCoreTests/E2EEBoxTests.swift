@@ -88,7 +88,7 @@ struct E2EEBoxTests {
     @Test("a low-order peer key is refused, as tweetnacl's deriveSharedKey refuses it")
     func lowOrderKey() throws {
         let fixture = try Self.loadFixture()
-        let pair = E2EEBox.generateKeyPair()
+        let pair = try E2EEBox.generateKeyPair()
         #expect(throws: E2EEBoxError.lowOrderPublicKey) {
             try E2EEBox.deriveSharedKey(
                 ourSecretKey: pair.secretKey,

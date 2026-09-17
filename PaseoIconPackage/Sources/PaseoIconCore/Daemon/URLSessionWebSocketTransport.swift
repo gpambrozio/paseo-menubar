@@ -24,6 +24,18 @@ public final class URLSessionWebSocketTransport: DaemonTransport {
     }
 
     public func connect() {
+        // A second connect has to leave nothing of the first behind. Without
+        // this, `closed` stayed true from the previous `close()` — so `send`
+        // refused every frame forever — while the old `URLSession` and its
+        // strongly-retained delegate leaked with the socket still open. A
+        // silently dead channel. Production builds a fresh transport per
+        // attempt, but the type should not punish a caller who does not.
+        receiveTask?.cancel()
+        sendTail.cancel()
+        task?.cancel(with: .goingAway, reason: nil)
+        session?.invalidateAndCancel()
+        closed = false
+
         var urlRequest = URLRequest(url: request.url)
         for (name, value) in request.headers {
             urlRequest.setValue(value, forHTTPHeaderField: name)

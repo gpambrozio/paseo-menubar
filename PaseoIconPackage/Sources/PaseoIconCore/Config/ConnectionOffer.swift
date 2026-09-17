@@ -34,6 +34,7 @@ public enum ConnectionOfferError: Error, Equatable {
     case invalidJSON(String)
     case unsupportedVersion(Int)
     case emptyField(String)
+    case invalidDaemonPublicKey
 }
 
 extension ConnectionOffer {
@@ -65,6 +66,19 @@ extension ConnectionOffer {
         guard v == 2 else { throw ConnectionOfferError.unsupportedVersion(v) }
         guard !serverId.isEmpty else { throw ConnectionOfferError.emptyField("serverId") }
         guard !daemonPublicKeyB64.isEmpty else { throw ConnectionOfferError.emptyField("daemonPublicKeyB64") }
+        // Decoded here, not merely checked for emptiness. A key that is
+        // base64url rather than base64, or that decodes to the wrong length,
+        // used to get all the way to `E2EEChannel.init` — which fails
+        // correctly, but reports `.disconnected(reason:)`, and
+        // `HostConnection.handleStatus` drops a reason that is not an auth
+        // rejection. The host then reads as merely offline, retry rebuilds into
+        // the same dead end, and nothing ever names the cause. Validating it
+        // here makes it a named entry failure instead.
+        do {
+            _ = try E2EEBox.importPublicKey(base64: daemonPublicKeyB64)
+        } catch {
+            throw ConnectionOfferError.invalidDaemonPublicKey
+        }
         guard !relay.endpoint.isEmpty else { throw ConnectionOfferError.emptyField("relay.endpoint") }
         return self
     }

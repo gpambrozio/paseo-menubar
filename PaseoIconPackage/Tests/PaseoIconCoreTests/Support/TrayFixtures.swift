@@ -80,7 +80,7 @@ enum Fixture {
     static let relayEntry: HostEntry = .relay(
         id: "r1",
         label: "studio",
-        offer: ConnectionOffer(serverId: "srv-2", daemonPublicKeyB64: "AAAA", relay: .init(endpoint: "relay.paseo.sh:443", useTls: true))
+        offer: ConnectionOffer(serverId: "srv-2", daemonPublicKeyB64: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=", relay: .init(endpoint: "relay.paseo.sh:443", useTls: true))
     )
 
     static func config(_ hosts: HostEntry...) throws -> AppConfig {

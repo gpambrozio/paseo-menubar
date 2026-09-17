@@ -57,6 +57,7 @@ extension ConnectionOfferError {
         case .invalidJSON(let detail): "the offer is not valid JSON (\(detail))"
         case .unsupportedVersion(let version): "unsupported offer version \(version)"
         case .emptyField(let field): "\(field) must not be empty"
+        case .invalidDaemonPublicKey: "daemonPublicKeyB64 is not a 32-byte base64 key"
         }
     }
 }

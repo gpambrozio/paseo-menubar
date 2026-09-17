@@ -358,6 +358,32 @@ struct DaemonSessionTests {
         #expect(workspace.bucket == nil)
     }
 
+    @Test("a null or scalar agent is rejected rather than taking the process down")
+    func nullAgentUpsert() {
+        // `ignoresUnknown` covers the field being *absent*, which the guard
+        // always handled. These are the shapes that used to reach
+        // `JSONSerialization.data(withJSONObject:)`: JSON `null` decodes to
+        // `NSNull`, which is not nil, and encoding it raises an Objective-C
+        // exception that no Swift catch can see. The evidence that this test
+        // works is a crashed test process, not a failed expectation.
+        let h = Harness()
+        h.connectFully()
+        var agentUpdates: [AgentUpdate] = []
+        var workspaceUpdates: [WorkspaceUpdate] = []
+        _ = h.session.onAgentUpdate { agentUpdates.append($0) }
+        _ = h.session.onWorkspaceUpdate { workspaceUpdates.append($0) }
+        for agent in ["null", "5", #""a-string""#, "[]", "true"] {
+            h.transport.simulateText(#"{"type":"session","message":{"type":"agent_update","payload":{"kind":"upsert","agent":\#(agent)}}}"#)
+        }
+        for workspace in ["null", "5", "[]"] {
+            h.transport.simulateText(#"{"type":"session","message":{"type":"workspace_update","payload":{"kind":"upsert","workspace":\#(workspace)}}}"#)
+        }
+        #expect(h.session.connectionState == .connected)
+        #expect(agentUpdates.isEmpty)
+        #expect(workspaceUpdates.isEmpty)
+        #expect(h.session.lastError?.hasPrefix("Message validation failed") == true)
+    }
+
     @Test("unknown and malformed messages are ignored, not fatal")
     func ignoresUnknown() {
         let h = Harness()
@@ -386,7 +412,7 @@ struct DaemonSessionTests {
 
     @Test("wraps the transport in an E2EE channel for relay hosts")
     func relayWrapsChannel() throws {
-        let daemon = E2EEBox.generateKeyPair()
+        let daemon = try E2EEBox.generateKeyPair()
         let h = Harness(e2eeKey: E2EEBox.exportPublicKey(daemon.publicKey))
         h.session.connect()
         h.transport.simulateOpen()
@@ -407,7 +433,7 @@ struct DaemonSessionTests {
 
     @Test("a fatal E2EE frame disconnects the session at once and reconnects after the base delay")
     func relayFatalFrameReconnects() async throws {
-        let daemon = E2EEBox.generateKeyPair()
+        let daemon = try E2EEBox.generateKeyPair()
         let h = Harness(e2eeKey: E2EEBox.exportPublicKey(daemon.publicKey))
         h.session.connect()
         let first = h.transport

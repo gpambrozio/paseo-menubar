@@ -62,7 +62,7 @@ struct PaseoRegistryTests {
             "type": "relay",
             "relayEndpoint": "relay.paseo.sh:443",
             "useTls": true,
-            "daemonPublicKeyB64": "AAAA",
+            "daemonPublicKeyB64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
         ]
         let snapshot = try PaseoRegistry.hostEntries(fromJSON: try json([
             profile(["serverId": "srv_a", "connections": [shared], "preferredConnectionId": shared["id"] as Any]),
@@ -71,13 +71,53 @@ struct PaseoRegistryTests {
         #expect(snapshot.hosts.map(\.id) == ["srv_a", "srv_b"])
     }
 
+    @Test("a relay profile with an unusable key is named, and costs no other host")
+    func unusableRelayKey() throws {
+        // The desktop app can write a relay profile whose pairing never
+        // finished, or one whose key is base64url rather than base64. Both used
+        // to reach `AppConfig.validate`, which throws for the whole list — and
+        // `RegistrySession.readOnce` catches that and returns before applying
+        // anything, so the tray connected to nothing at all, including the
+        // local daemon, and said only "Configuration error".
+        for badKey in ["", "AAAA", "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"] {
+            let snapshot = try PaseoRegistry.hostEntries(fromJSON: try json([
+                profile(["label": "Direct one"]),
+                profile([
+                    "serverId": "srv_relay",
+                    "label": "Half-paired relay",
+                    "connections": [["id": "relay:wss:relay.paseo.sh:443", "type": "relay", "relayEndpoint": "relay.paseo.sh:443", "useTls": true, "daemonPublicKeyB64": badKey]],
+                    "preferredConnectionId": "relay:wss:relay.paseo.sh:443",
+                ]),
+            ]))
+            #expect(snapshot.hosts.map(\.id) == ["srv_one"], "key \(badKey.isEmpty ? "<empty>" : badKey) cost the healthy host")
+            #expect(snapshot.failures.count == 1)
+            #expect(try #require(snapshot.failures.first).contains("Half-paired relay"))
+        }
+    }
+
+    @Test("the hosts that survive a bad relay profile still validate as a config")
+    func badRelayStillYieldsAConfig() throws {
+        // The end the user feels: a config the fleet can actually apply, rather
+        // than an error row and an empty menu.
+        let snapshot = try PaseoRegistry.hostEntries(fromJSON: try json([
+            profile(["label": "Direct one"]),
+            profile([
+                "serverId": "srv_relay",
+                "connections": [["id": "relay:wss:relay.paseo.sh:443", "type": "relay", "relayEndpoint": "relay.paseo.sh:443", "useTls": true, "daemonPublicKeyB64": ""]],
+                "preferredConnectionId": "relay:wss:relay.paseo.sh:443",
+            ]),
+        ]))
+        let config = try AppConfig.validate(hosts: snapshot.hosts)
+        #expect(config.hosts.map(\.id) == ["srv_one"])
+    }
+
     @Test("keeps only the first profile for a repeated serverId and names the loser")
     func duplicateServerId() throws {
         let snapshot = try PaseoRegistry.hostEntries(fromJSON: try json([
             profile(["label": "Direct one"]),
             profile([
                 "label": "Relay twin",
-                "connections": [["id": "relay:wss:relay.paseo.sh:443", "type": "relay", "relayEndpoint": "relay.paseo.sh:443", "useTls": true, "daemonPublicKeyB64": "AAAA"]],
+                "connections": [["id": "relay:wss:relay.paseo.sh:443", "type": "relay", "relayEndpoint": "relay.paseo.sh:443", "useTls": true, "daemonPublicKeyB64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="]],
                 "preferredConnectionId": "relay:wss:relay.paseo.sh:443",
             ]),
         ]))

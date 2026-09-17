@@ -240,7 +240,15 @@ enum InboundParser {
         case "agent_update":
             switch payload["kind"] as? String {
             case "upsert":
-                guard let agent = payload["agent"] else { throw InboundParseError.malformed("agent upsert without agent") }
+                // Narrowed to a dictionary, not merely checked for presence.
+                // JSON `null` decodes to `NSNull`, which is not nil, and
+                // handing that to `JSONSerialization.data(withJSONObject:)`
+                // raises an Objective-C exception rather than throwing — so the
+                // catch in `DaemonSession.handleFrame` cannot see it and the
+                // process dies. Same for a number, a string or an array.
+                guard let agent = payload["agent"] as? [String: Any] else {
+                    throw InboundParseError.malformed("agent upsert without an agent object")
+                }
                 return .agentUpdate(.upsert(try decode(AgentSnapshot.self, from: agent)))
             case "remove":
                 guard let agentId = payload["agentId"] as? String else {
@@ -253,8 +261,10 @@ enum InboundParser {
         case "workspace_update":
             switch payload["kind"] as? String {
             case "upsert":
-                guard let workspace = payload["workspace"] else {
-                    throw InboundParseError.malformed("workspace upsert without workspace")
+                // A dictionary, for the same reason as `agent` above: `null`
+                // here is `NSNull`, and encoding it raises rather than throws.
+                guard let workspace = payload["workspace"] as? [String: Any] else {
+                    throw InboundParseError.malformed("workspace upsert without a workspace object")
                 }
                 return .workspaceUpdate(.upsert(try decode(WorkspaceDescriptor.self, from: workspace)))
             case "remove":
@@ -279,6 +289,13 @@ enum InboundParser {
     }
 
     private static func decode<T: Decodable>(_ type: T.Type, from object: Any) throws -> T {
+        // The callers all narrow to a dictionary first, so this is the belt to
+        // that braces: `data(withJSONObject:)` raises an uncatchable
+        // Objective-C exception for a top-level value that is not an array or
+        // an object, and this is the only line in the file that can do that.
+        guard JSONSerialization.isValidJSONObject(object) else {
+            throw InboundParseError.malformed("\(type) payload is not a JSON object")
+        }
         let data = try JSONSerialization.data(withJSONObject: object)
         return try JSONDecoder().decode(type, from: data)
     }

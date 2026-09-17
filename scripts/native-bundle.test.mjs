@@ -9,6 +9,7 @@ import { MACOS_SYMBOLS, assertCaskMatchesBundle, caskMacOSSymbol } from "./check
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CASK_PATH = path.join(ROOT, "packaging", "homebrew", "paseo-menubar.rb");
 const README_PATH = path.join(ROOT, "README.md");
+const MANIFEST_PATH = path.join(ROOT, "PaseoIconPackage", "Package.swift");
 
 describe("infoPlist", () => {
   it("declares the bundle the cask installs and the id the cask quits", () => {
@@ -113,6 +114,22 @@ describe("the packaging script is reachable the way the docs say", () => {
     // here silently labels the artifacts with the previous release.
     const pkg = JSON.parse(await readFile(path.join(ROOT, "package.json"), "utf8"));
     expect(pkg.version).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+});
+
+describe("the package manifest and the native bundle agree", () => {
+  // CLAUDE.md names four places the macOS floor lives, and every other check
+  // hangs off MIN_MACOS: this file compares it to the cask and the README, and
+  // check-cask-macos.mjs compares the cask to the built Info.plist. Nothing
+  // parsed the manifest, so raising `platforms` alone would leave the binary's
+  // LC_BUILD_VERSION above the floor the plist, the cask and the README all
+  // still advertise -- with every check green. Homebrew installs happily and
+  // the app refuses to launch, on someone else's machine.
+  it("declares the same macOS floor the bundle will claim", async () => {
+    const manifest = await readFile(MANIFEST_PATH, "utf8");
+    const declared = manifest.match(/\.macOS\(\.v(\d+)\)/);
+    expect(declared).not.toBeNull();
+    expect(declared[1]).toBe(MIN_MACOS.split(".")[0]);
   });
 });
 

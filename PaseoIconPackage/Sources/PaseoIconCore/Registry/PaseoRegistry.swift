@@ -119,11 +119,26 @@ public enum PaseoRegistry {
             case .directTcp(let endpoint, let useTls, let password):
                 hosts.append(.directTcp(id: profile.serverId, label: label, endpoint: endpoint, useTls: useTls, password: password))
             case .relay(let endpoint, let useTls, let daemonPublicKeyB64):
-                hosts.append(.relay(
-                    id: profile.serverId,
-                    label: label,
-                    offer: ConnectionOffer(serverId: profile.serverId, daemonPublicKeyB64: daemonPublicKeyB64, relay: .init(endpoint: endpoint, useTls: useTls))
-                ))
+                let offer = ConnectionOffer(
+                    serverId: profile.serverId,
+                    daemonPublicKeyB64: daemonPublicKeyB64,
+                    relay: .init(endpoint: endpoint, useTls: useTls)
+                )
+                // Validated here, per profile, rather than only in
+                // `AppConfig.validate`. That one throws for the whole list, and
+                // `RegistrySession.readOnce` catches it and returns before
+                // applying anything — so one relay profile whose pairing never
+                // finished cost every other host, including the local daemon.
+                // "Not to zero hosts" has to hold at this level too, and the
+                // guard in `AppConfig` then becomes the unreachable last line
+                // of defence it reads as.
+                do {
+                    _ = try offer.validated()
+                } catch let error as ConnectionOfferError {
+                    failures.append("\(name) — \(error.message)")
+                    continue
+                }
+                hosts.append(.relay(id: profile.serverId, label: label, offer: offer))
             }
         }
         return RegistrySnapshot(hosts: hosts, failures: failures)

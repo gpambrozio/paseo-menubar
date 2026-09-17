@@ -78,13 +78,11 @@ final class AppCoordinator {
     // MARK: - Menu actions
 
     func openWorkspace(_ row: TrayWorkspaceRow) {
-        guard let serverId = row.serverId else {
-            // No `server_info` yet: there is nothing to build a link out of.
-            return open(OpenPaseo.app(webBaseUrl: fleet.firstWebBaseUrl(), desktopAppInstalled: OpenPaseo.defaultDesktopAppInstalled()))
-        }
+        // Every routing decision, including the missing-serverId one, lives in
+        // `OpenPaseo` where a test can reach it. This method only opens.
         open(OpenPaseo.workspace(
             OpenWorkspaceTarget(
-                serverId: serverId,
+                serverId: row.serverId,
                 workspaceId: row.workspaceId,
                 agentId: row.agentId,
                 webBaseUrl: fleet.webBaseUrl(for: row.hostId)

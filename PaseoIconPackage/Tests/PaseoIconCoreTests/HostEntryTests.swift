@@ -2,7 +2,7 @@ import Testing
 @testable import PaseoIconCore
 
 struct HostEntryTests {
-    private let offer = ConnectionOffer(serverId: "srv-1", daemonPublicKeyB64: "k", relay: .init(endpoint: "relay.paseo.sh:443"))
+    private let offer = ConnectionOffer(serverId: "srv-1", daemonPublicKeyB64: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=", relay: .init(endpoint: "relay.paseo.sh:443"))
 
     @Test("exposes id and label for both shapes")
     func idAndLabel() {

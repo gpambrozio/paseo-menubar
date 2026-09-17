@@ -56,4 +56,21 @@ struct SnappyTests {
             try Snappy.uncompress([0x03, 0x08, 0x61][...])
         }
     }
+    @Test("refuses an impossible declared length instead of reserving for it")
+    func absurdDeclaredLength() {
+        // Five bytes of preamble can declare ~34 GB. macOS backs the
+        // reservation lazily so this did not die, but an Array allocation
+        // failure is a `fatalError` with no error row, and snappy cannot expand
+        // more than about 32x — so a length this far past the input is a lie
+        // worth refusing rather than attempting.
+        #expect(throws: SnappyError.truncated) {
+            _ = try Snappy.uncompress([0xff, 0xff, 0xff, 0xff, 0x7f][...])
+        }
+        // A modest overstatement still reaches the length check at the end,
+        // which is the error that names what actually happened.
+        #expect(throws: SnappyError.self) {
+            _ = try Snappy.uncompress([0x40, 0x00][...])
+        }
+    }
+
 }

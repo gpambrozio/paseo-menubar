@@ -66,7 +66,21 @@ relay.on("exit", (code) => {
     process.exit(1);
   }
 });
-await waitForHealth(`http://127.0.0.1:${relayPort}/health`, 90_000);
+// Node does not kill its children on exit, and `stop()` below is only reachable
+// once stdin closes. Every failure path before that -- the health check timing
+// out, the daemon boot throwing -- used to leave `wrangler dev` running and
+// holding this port until someone noticed.
+process.on("exit", () => {
+  if (!stopping) relay.kill("SIGKILL");
+});
+
+try {
+  await waitForHealth(`http://127.0.0.1:${relayPort}/health`, 90_000);
+} catch (error) {
+  stopping = true;
+  relay.kill("SIGKILL");
+  throw error;
+}
 
 const logger = pino({ level: "warn" }, new Writable({ write(_chunk, _encoding, callback) { callback(); } }));
 const root = await mkdtemp(path.join(os.tmpdir(), "paseo-menubar-swift-relay-"));

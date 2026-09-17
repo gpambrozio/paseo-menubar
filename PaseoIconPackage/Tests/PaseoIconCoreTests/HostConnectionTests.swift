@@ -57,7 +57,7 @@ struct HostConnectionTests {
     func relayEntry() throws {
         let offer = ConnectionOffer(
             serverId: "srv-1",
-            daemonPublicKeyB64: E2EEBox.exportPublicKey(E2EEBox.generateKeyPair().publicKey),
+            daemonPublicKeyB64: E2EEBox.exportPublicKey(try E2EEBox.generateKeyPair().publicKey),
             relay: .init(endpoint: "relay.paseo.sh:443")
         )
         let h = try Harness(entry: .relay(id: "r1", label: "Studio", offer: offer))

@@ -15,6 +15,8 @@ import { spawn } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { assertCaskMatchesBundle } from "./check-cask-macos.mjs";
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 /** The bundle directory name. Not the display name, and not the cask token. */
 export const BUNDLE_NAME = "PaseoIcon";
@@ -255,7 +257,11 @@ export async function makeArtifacts({ app, out, version }) {
 }
 
 // Usage: node scripts/native-bundle.mjs --version 0.4.0 [--identity "Developer ID Application: ..."] [--skip-notarize]
-if (import.meta.url === `file://${process.argv[1]}`) {
+// `import.meta.url` is realpath-resolved and percent-encoded; `process.argv[1]`
+// is neither. Comparing them directly makes this whole block a silent no-op for
+// a clone reached through any symlinked path, or one whose path has a space --
+// the script runs, imports, does nothing, and exits 0.
+if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
   const args = new Map();
   for (let i = 2; i < process.argv.length; i++) {
     const flag = process.argv[i];

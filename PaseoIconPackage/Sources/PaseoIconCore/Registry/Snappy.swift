@@ -33,6 +33,14 @@ public enum Snappy {
             shift += 7
             if shift > 28 { throw SnappyError.truncated }
         }
+        // The preamble permits a shift up to 28, so `expected` can reach ~34 GB
+        // from five bytes of input. macOS backs the reservation lazily so this
+        // does not die today, but an Array allocation failure is a `fatalError`
+        // and refusing an impossible length is free. Snappy cannot expand more
+        // than about 32x, so a bound against the input is tight and honest.
+        guard expected <= 0xffff_ffff, expected <= bytes.count * 64 + 64 else {
+            throw SnappyError.truncated
+        }
         var out: [UInt8] = []
         out.reserveCapacity(expected)
 

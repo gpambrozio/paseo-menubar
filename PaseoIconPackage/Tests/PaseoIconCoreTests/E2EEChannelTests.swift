@@ -19,10 +19,11 @@ struct E2EEChannelTests {
         let clock = TestClock()
         let base: FakeTransport
         let channel: E2EEChannel
-        let daemon = E2EEBox.generateKeyPair()
+        let daemon: E2EEKeyPair
         let recorder = Recorder()
 
         init() throws {
+            daemon = try E2EEBox.generateKeyPair()
             base = FakeTransport(request: TransportRequest(url: URL(string: "wss://relay.test/ws")!))
             channel = try E2EEChannel(
                 base: base,

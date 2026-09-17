@@ -103,7 +103,19 @@ public final class HostFleet {
     /// both the logs and the tests non-reproducible.
     public func closeAll() {
         for host in appliedHosts {
-            connections.removeValue(forKey: host.id)?.close()
+            if let connection = connections.removeValue(forKey: host.id) {
+                connection.close()
+            } else {
+                // A host whose connection could not be built still has a store
+                // row — `connect`'s catch registers one so the menu can show
+                // `invalid` — but no connection, and `close()` is the only
+                // thing that removes a row. Without this the row survives every
+                // later `apply`: after the user deletes that host in the Paseo
+                // app it stays as a ghost with no explanation and no retry,
+                // still counted in `hosts.count`, which flips the host label on
+                // for someone who now has a single host.
+                store.removeHost(host.id)
+            }
         }
         // Anything left is a connection whose entry is already gone; close it
         // rather than leak the socket.

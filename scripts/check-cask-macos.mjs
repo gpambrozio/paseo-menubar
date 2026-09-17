@@ -93,7 +93,15 @@ export function assertCaskMatchesBundle(caskSource, infoPlistXml) {
 }
 
 // Usage: node scripts/check-cask-macos.mjs [--app release/mac-arm64/PaseoIcon.app]
-if (import.meta.url === `file://${process.argv[1]}`) {
+// `import.meta.url` is realpath-resolved and percent-encoded; `process.argv[1]`
+// is neither. Comparing them directly makes this whole block a silent no-op for
+// a clone reached through any symlinked path, or one whose path has a space --
+// the script runs, imports, does nothing, and exits 0. For this file that
+// means writing no cask while the workflow reports success.
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
   const { readFile } = await import("node:fs/promises");
   const path = await import("node:path");
 

@@ -20,6 +20,9 @@ public enum WAL {
     private static let typeFirst: UInt8 = 2
     private static let typeMiddle: UInt8 = 3
     private static let typeLast: UInt8 = 4
+    /// LevelDB packs a sequence into the top 56 bits of an internal key, so
+    /// no legitimate sequence exceeds this.
+    private static let maxSequence: UInt64 = (UInt64(1) << 56) - 1
     private static let recordDeletion: UInt8 = 0
     private static let recordValue: UInt8 = 1
 
@@ -27,12 +30,15 @@ public enum WAL {
     public static func find(in file: [UInt8], userKey: [UInt8]) throws -> LogScan {
         var found: [InternalRecord] = []
         let scan = readBatches(file)
+        var dropped = scan.droppedFragments
         for batch in scan.batches {
-            for record in try batchRecords(batch) where Binary.compare(record.userKey[...], userKey[...]) == 0 {
+            let parsed = batchRecords(batch)
+            dropped += parsed.dropped
+            for record in parsed.records where Binary.compare(record.userKey[...], userKey[...]) == 0 {
                 found.append(record)
             }
         }
-        return LogScan(records: found, droppedFragments: scan.droppedFragments)
+        return LogScan(records: found, droppedFragments: dropped)
     }
 
     /// Reassembles the physical records of a write-ahead log into batch
@@ -107,35 +113,69 @@ public enum WAL {
     /// Decodes one write batch: an 8-byte base sequence, a 4-byte count, then
     /// that many records. Keys here are user keys with no trailer; a record's
     /// sequence is the batch's base plus its index.
-    private static func batchRecords(_ batch: [UInt8]) throws -> [InternalRecord] {
-        guard batch.count >= 12 else { return [] }
+    private static func batchRecords(_ batch: [UInt8]) -> (records: [InternalRecord], dropped: Int) {
+        guard batch.count >= 12 else { return ([], 0) }
         let baseLow = UInt64(Binary.readUInt32LE(batch, at: 0))
         let baseHigh = UInt64(Binary.readUInt32LE(batch, at: 4))
         let baseSequence = (baseHigh << 32) | baseLow
         let count = Int(Binary.readUInt32LE(batch, at: 8))
 
+        // A LevelDB sequence is 56 bits — `SSTable.splitInternalKey` masks it to
+        // that — but here it arrives as two raw little-endian words, so a batch
+        // header can declare anything up to `UInt64.max`. Adding the record's
+        // index to that overflows and traps, uncatchably, taking the menu bar
+        // item with it; and nothing signs this file, so for anything that can
+        // write under the Paseo app's storage it is deterministic rather than a
+        // torn read. `&+` alone would stop the trap and keep a wrapped sequence
+        // that can beat the real winner in `LevelDBReader.scan`, so the batch is
+        // refused instead, and counted so the tray says the log lost something.
+        guard baseSequence <= maxSequence - UInt64(count) else { return ([], 1) }
+
         var records: [InternalRecord] = []
+        var dropped = 0
         var pos = 12
         var index = 0
         while index < count, pos < batch.count {
             let type = batch[pos]
             pos += 1
-            let keyLength = try Binary.readVarint32(batch, at: pos)
+
+            // A length that runs off the end means this batch is truncated, not
+            // that the file is damage. Throwing here reached
+            // `LevelDBReader.scan`, which counts the whole file as damage and
+            // discards every batch already parsed out of it — possibly the
+            // newest registry write. Stop at the truncation and keep what came
+            // before it, which is the policy the rest of this loop already had.
+            guard let keyLength = try? Binary.readVarint32(batch, at: pos) else {
+                dropped += 1
+                break
+            }
             pos = keyLength.next
-            let keyEnd = min(pos + Int(keyLength.value), batch.count)
+            let keyEnd = pos + Int(keyLength.value)
+            guard keyEnd <= batch.count else {
+                dropped += 1
+                break
+            }
             let userKey = Array(batch[pos..<keyEnd])
             pos = keyEnd
 
             var value: [UInt8] = []
             if type == recordValue {
-                let valueLength = try Binary.readVarint32(batch, at: pos)
+                guard let valueLength = try? Binary.readVarint32(batch, at: pos) else {
+                    dropped += 1
+                    break
+                }
                 pos = valueLength.next
-                let valueEnd = min(pos + Int(valueLength.value), batch.count)
+                let valueEnd = pos + Int(valueLength.value)
+                guard valueEnd <= batch.count else {
+                    dropped += 1
+                    break
+                }
                 value = Array(batch[pos..<valueEnd])
                 pos = valueEnd
             } else if type != recordDeletion {
                 // An unknown record type means we can no longer trust our
                 // position in this batch, so stop rather than misread the rest.
+                dropped += 1
                 break
             }
 
@@ -147,6 +187,6 @@ public enum WAL {
             ))
             index += 1
         }
-        return records
+        return (records, dropped)
     }
 }

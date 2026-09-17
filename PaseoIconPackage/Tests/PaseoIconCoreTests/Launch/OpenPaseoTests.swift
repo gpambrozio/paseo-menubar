@@ -102,4 +102,27 @@ struct OpenPaseoTests {
     func appNoFallback() {
         #expect(url(OpenPaseo.app(webBaseUrl: nil, desktopAppInstalled: false)) == "paseo://")
     }
+    @Test("the bare scheme URL parses, so the first click cannot be the first failure")
+    func appDeepLinkParses() {
+        // `appDeepLink` is a lazily-evaluated global built with a force unwrap.
+        // It parses on every Foundation shipped so far, but nothing pinned it —
+        // so a parser change would trap at the user's first click on Open Paseo
+        // rather than here.
+        #expect(OpenPaseo.appDeepLink.absoluteString == "paseo://")
+    }
+
+    @Test("a workspace with no serverId yet opens Paseo rather than nothing")
+    func workspaceWithoutServerId() {
+        // Before `server_info` arrives there is no id to build either link out
+        // of. This decision used to live in the app layer, where no test could
+        // reach it; it belongs beside the other two fallbacks.
+        let noWeb = OpenWorkspaceTarget(serverId: nil, workspaceId: "w1", agentId: "a1", webBaseUrl: nil)
+        #expect(url(OpenPaseo.workspace(noWeb, desktopAppInstalled: true)) == "paseo://")
+
+        // With a web origin known, the browser is the better answer than a
+        // scheme that would open Paseo at whatever it last showed.
+        let withWeb = OpenWorkspaceTarget(serverId: nil, workspaceId: "w1", agentId: "a1", webBaseUrl: "http://127.0.0.1:6767/")
+        #expect(url(OpenPaseo.workspace(withWeb, desktopAppInstalled: false)) == "http://127.0.0.1:6767")
+    }
+
 }
