@@ -8,6 +8,7 @@ import { MACOS_SYMBOLS, assertCaskMatchesBundle, caskMacOSSymbol } from "./check
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CASK_PATH = path.join(ROOT, "packaging", "homebrew", "paseo-menubar.rb");
+const README_PATH = path.join(ROOT, "README.md");
 
 describe("infoPlist", () => {
   it("declares the bundle the cask installs and the id the cask quits", () => {
@@ -93,5 +94,17 @@ describe("the cask and the native bundle agree", () => {
     expect(version).toBeDefined();
     // The url interpolates #{version}; compare the rendered tail.
     expect(cask).toContain(artifactNames({ version: "VERSION" }).dmg.replace("VERSION", '#{version}'));
+  });
+});
+
+describe("the README and the native bundle agree", () => {
+  // check-cask-macos.mjs already phrases its failure as "the macOS version
+  // README.md promises", but nothing made that true. Raising the floor without
+  // this test leaves the shipped doc telling people on the old macOS to install
+  // an app Homebrew will refuse them, and no suite notices.
+  it("promises the macOS this bundle requires", async () => {
+    const readme = await readFile(README_PATH, "utf8");
+    const major = MIN_MACOS.split(".")[0];
+    expect(readme).toContain(`need macOS ${major} or later`);
   });
 });

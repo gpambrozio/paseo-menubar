@@ -148,6 +148,10 @@ async function buildIcns(root, resourcesDir) {
  * under `swift run`.
  */
 export async function buildBundle({ root, version }) {
+  // Checked here rather than only where the plist is written: that happens
+  // after `swift build -c release`, so a typo in --version would burn the whole
+  // release build before saying so.
+  infoPlist({ version });
   const out = path.join(root, "release", "native");
   const app = path.join(out, `${BUNDLE_NAME}.app`);
   await rm(app, { recursive: true, force: true });
@@ -185,16 +189,21 @@ export async function sign(app, identity) {
 export async function notarize(app, out) {
   const credentials = readCredentials();
   const zip = path.join(out, "notarize.zip");
-  await runOrThrow("ditto", ["-c", "-k", "--keepParent", app, zip], "Zipping for notarization");
-  console.log(`submitting ${path.basename(app)} to Apple; this waits on their queue`);
-  const output = await runOrThrow("xcrun", ["notarytool", "submit", zip, ...credentials, "--wait"], "Notarizing");
-  // notarytool exits 0 for a submission that finished but was rejected, so the
-  // status line is what actually decides.
-  if (!/status:\s*Accepted/i.test(output)) throw new Error(`Apple did not accept the app:\n${output}`);
-  await runOrThrow("xcrun", ["stapler", "staple", app], "Stapling");
-  await runOrThrow("xcrun", ["stapler", "validate", app], "Validating the staple");
-  await runOrThrow("spctl", ["-a", "-t", "exec", "-vv", app], "Gatekeeper assessment");
-  await rm(zip, { force: true });
+  // Scratch, not an artifact: removed on the way out whether Apple accepted or
+  // refused, so a rejected submission does not leave it beside the real dmg.
+  try {
+    await runOrThrow("ditto", ["-c", "-k", "--keepParent", app, zip], "Zipping for notarization");
+    console.log(`submitting ${path.basename(app)} to Apple; this waits on their queue`);
+    const output = await runOrThrow("xcrun", ["notarytool", "submit", zip, ...credentials, "--wait"], "Notarizing");
+    // notarytool exits 0 for a submission that finished but was rejected, so the
+    // status line is what actually decides.
+    if (!/status:\s*Accepted/i.test(output)) throw new Error(`Apple did not accept the app:\n${output}`);
+    await runOrThrow("xcrun", ["stapler", "staple", app], "Stapling");
+    await runOrThrow("xcrun", ["stapler", "validate", app], "Validating the staple");
+    await runOrThrow("spctl", ["-a", "-t", "exec", "-vv", app], "Gatekeeper assessment");
+  } finally {
+    await rm(zip, { force: true });
+  }
 }
 
 /** The dmg and zip, built from the stapled bundle, never before it. */
