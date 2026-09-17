@@ -5958,7 +5958,7 @@ Confirm green.
 - [ ] **Step 5: Run the whole suite**
 
 Run: `swift test --package-path PaseoIconPackage`
-Expected: `Test run with 294 tests in 28 suites passed`.
+Expected: `Test run with 313 tests in 31 suites passed`.
 
 - [ ] **Step 6: Commit**
 
@@ -6456,7 +6456,7 @@ Expected: `0`.
 - [ ] **Step 4: Run the whole suite**
 
 Run: `swift test --package-path PaseoIconPackage`
-Expected: `Test run with 294 tests in 28 suites passed`. The app target has no tests of its own by design: everything it could get wrong lives in the core, and what is left is wiring plus two AppKit calls.
+Expected: `Test run with 313 tests in 31 suites passed`. The app target has no tests of its own by design: everything it could get wrong lives in the core, and what is left is wiring plus two AppKit calls.
 
 - [ ] **Step 5: Commit**
 
@@ -6590,7 +6590,7 @@ Expected: `Test run with 2 tests in 1 suite passed`, in about half a second per 
 - [ ] **Step 3: Run everything, twice**
 
 Run: `swift test --package-path PaseoIconPackage && swift test --package-path PaseoIconPackage`
-Expected: `Test run with 296 tests in 29 suites passed` both times.
+Expected: `Test run with 315 tests in 32 suites passed` both times.
 
 Run: `npx vitest run && npm run typecheck`
 Expected: vitest green, typecheck silent. The Electron app is still here and still passing; nothing in Tasks 1 through 11 has touched it.
