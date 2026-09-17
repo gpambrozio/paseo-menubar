@@ -18,7 +18,8 @@
     "start": "npm run build && npm run icons && electron .",
     "dist": "npm run build && npm run icons && electron-builder && npm run check:cask-macos && npm run notarize:dmg",
     "check:cask-macos": "node scripts/check-cask-macos.mjs",
-    "notarize:dmg": "node scripts/notarize-dmg.mjs"
+    "notarize:dmg": "node scripts/notarize-dmg.mjs",
+    "dist:native": "node scripts/native-bundle.mjs"
   },
   "dependencies": {
     "@getpaseo/client": "0.4.0",
