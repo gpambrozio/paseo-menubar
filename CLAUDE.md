@@ -66,7 +66,7 @@ app that no agent can see.
 | `PaseoIconCore/Launch/OpenPaseo.swift` | Deep links, with the browser fallback. |
 | `PaseoIcon/TrayIcons.swift` | The five bucket glyphs as template images. |
 | `PaseoIcon/MenuBarLabel.swift` | The rendered menu bar item: glyph plus count. |
-| `PaseoIcon/MenuContent.swift` | Renders `[MenuItem]`. Decides nothing. |
+| `PaseoIcon/MenuContent.swift` | Renders `[MenuItem]` as the panel's rows, plus the metrics they share. Decides nothing. |
 | `PaseoIcon/AppCoordinator.swift` | The object graph, login item, alerts, `NSWorkspace`. |
 | `PaseoIcon/PaseoIconApp.swift` | The `MenuBarExtra` scene and the app delegate. |
 
@@ -76,9 +76,13 @@ layer, where nothing could test it. If you find yourself adding a decision to
 
 ## Critical rules
 
-- **Never create a window.** `MenuBarExtra` in menu style is the whole interface, and the
-  style is stated rather than inferred for that reason. A preferences window is
-  deliberately deferred.
+- **The panel is the whole interface, and there is still no window.** `MenuBarExtra` is in
+  window style, stated rather than inferred. It was menu style until 2026-09-17: an
+  `NSMenu` row is an `NSMenuItem`, which drops the view modifiers on the way in and draws a
+  non-clickable row in the disabled grey however the title is attributed — so the section
+  headings could not be given weight and colour, and nothing else could be styled either.
+  The panel belongs to the menu bar item and closes when it resigns key; a free-standing
+  window, a preferences window included, is still deliberately deferred.
 - **The wire is pinned to `@getpaseo/protocol` 0.4.0 and `protocolVersion: 1`**, and the
   Swift structs are a hand-written copy of that slice. Paseo guarantees that old clients
   parse messages from new daemons; that guarantee is what makes the copy safe. The npm

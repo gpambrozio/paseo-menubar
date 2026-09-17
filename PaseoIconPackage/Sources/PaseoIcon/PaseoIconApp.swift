@@ -29,9 +29,13 @@ struct PaseoIconApp: App {
                     coordinator.start()
                 }
         }
-        // Stated rather than left to `.automatic`: the window style would put a
-        // panel on screen, and this app must never create a window.
-        .menuBarExtraStyle(.menu)
+        // Window style, stated rather than left to `.automatic`. The panel is
+        // the whole interface: menu style makes every row an `NSMenuItem`,
+        // which drops view modifiers and draws a non-clickable row in the
+        // disabled grey, so a section heading could not be given the weight it
+        // needed. This is still not a free-standing window — the panel belongs
+        // to the menu bar item and closes when it resigns key.
+        .menuBarExtraStyle(.window)
     }
 }
 
