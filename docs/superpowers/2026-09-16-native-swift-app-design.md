@@ -25,12 +25,28 @@ end-to-end encryption is a v1 requirement, not a later phase.
 ### Language and UI toolkit
 
 Swift, built as a Swift Package with a SwiftUI `App`. The menu bar item is
-SwiftUI's `MenuBarExtra` in menu style. Its label is a SwiftUI view rendered
-to a non-template `NSImage` through `ImageRenderer`, which is how the item
-gets a colored icon and a count in one image; the same pre-rendering gives
-menu rows colored icons, since `NSMenuItem` strips color from template
-symbols. This is the pattern proven in the user's own Gallager app
+SwiftUI's `MenuBarExtra`. Its label is a SwiftUI view rendered to a
+non-template `NSImage` through `ImageRenderer`, which is how the item gets a
+colored icon and a count in one image. This is the pattern proven in the
+user's own Gallager app
 (`ClaudeSpyPackage/Sources/ClaudeSpyServerFeature/Views/MenuBarExtraView.swift`).
+
+The style was `.menu` through plan 2 and is `.window` as of 2026-09-17, which
+is phase 5 below. Menu style makes every row an `NSMenuItem`, and an
+`NSMenuItem` drops the view modifiers around its title and draws a
+non-clickable row in the disabled gray whatever color the attributed title
+asks for. That is not a styling inconvenience: it means a section heading
+cannot be made prominent, which is the first thing the menu was asked for
+beyond parity. Window style makes every row a real SwiftUI view, at the cost
+of owning what a menu gave for free — the hit area, the pointer highlight, the
+scrolling, and closing the panel after a row is clicked. The panel is still not
+a window in the sense the standalone design forbids: it belongs to the menu bar
+item and closes when it resigns key. `MenuModel` is untouched by the change,
+which is the point of keeping the menu as data — 349 tests still describe every
+row. What it does cost is keyboard navigation: arrow keys, type-select and the
+menu's VoiceOver semantics came with `NSMenu` and do not come with a panel. That
+is a regression, recorded in `CLAUDE.md`'s known issues rather than discovered
+later.
 
 AppKit's `NSStatusItem` is not used unless a need appears that `MenuBarExtra`
 cannot meet: a live animated status view, distinguishing left from right
@@ -234,7 +250,9 @@ Named so they are choices rather than omissions.
 
 - **Notifications, agent actions, a shared host registry.** Deferred for the
   same reasons as in the standalone design.
-- **A popover or preferences window.** Possible now; not needed for parity.
+- **A preferences window.** Still deferred. The window-style panel landed on
+  2026-09-17 and is not one: it has no title bar, no Dock presence, and closes
+  when it resigns key.
 - **Intel builds.** Releases stay `arm64`; a universal binary is a packaging
   decision for plan 4.
 - **A daemon-side sort key for the seed cap.** Unchanged from the known issue

@@ -35,8 +35,16 @@ struct MenuModelTests {
         )
     }
 
-    private func build(_ model: TrayViewModel, loginItemEnabled: Bool = false) -> [MenuItem] {
-        MenuModel.build(model, loginItemEnabled: loginItemEnabled)
+    private func build(_ model: TrayViewModel, loginItemEnabled: Bool = false, hostsExpanded: Bool = false) -> [MenuItem] {
+        MenuModel.build(model, loginItemEnabled: loginItemEnabled, hostsExpanded: hostsExpanded)
+    }
+
+    private func hostRows(_ items: [MenuItem]) -> [String] {
+        items.compactMap { if case .hostStatus(_, let label, _) = $0 { label } else { nil } }
+    }
+
+    private func summary(_ items: [MenuItem]) -> String? {
+        items.compactMap { if case .hostsSummary(let label, _) = $0 { label } else { nil } }.first
     }
 
     private func notes(_ items: [MenuItem]) -> [String] {
@@ -104,14 +112,27 @@ struct MenuModelTests {
         if case .separator = items[1] { Issue.record("separator after the heading") }
     }
 
-    @Test("renders a workspace row with its project and host")
+    @Test("renders a workspace row with its project, and without its host")
     func rowLabel() {
         let items = build(model(sections: [TrayMenuSection(bucket: .needsInput, rows: [row(hostLabel: "laptop")], overflow: 0)]))
         let labels = items.compactMap { item -> String? in
             if case .workspace(_, let label) = item { return label }
             return nil
         }
-        #expect(labels == ["fix-login  ·  paseo  ·  laptop"])
+        // The host is not in the label: it is its own run, so the panel can
+        // draw it smaller and quieter than the workspace it belongs to.
+        #expect(labels == ["fix-login  ·  paseo"])
+    }
+
+    @Test("hands the host over as its own part, with its separator attached")
+    func rowHostSuffix() {
+        let withHost = row(hostLabel: "laptop")
+        #expect(MenuModel.rowHostSuffix(withHost) == "  ·  laptop")
+        #expect(MenuModel.rowLabel(withHost) == "fix-login  ·  paseo")
+        // One host configured, so no row names it and there is no punctuation
+        // left dangling at the end of the label either.
+        #expect(MenuModel.rowHostSuffix(row()) == nil)
+        #expect(MenuModel.rowLabel(row()) == "fix-login  ·  paseo")
     }
 
     @Test("carries the row itself so a click has its ids")
@@ -140,7 +161,7 @@ struct MenuModelTests {
         let items = build(model(hostStatuses: [
             TrayHostStatus(hostId: "h1", label: "laptop", status: .connected),
             TrayHostStatus(hostId: "h2", label: "studio", status: .unauthorized),
-        ]))
+        ]), hostsExpanded: true)
         let hosts = items.compactMap { item -> (String, String, Bool)? in
             if case .hostStatus(let hostId, let label, let retryable) = item { return (hostId, label, retryable) }
             return nil
@@ -148,6 +169,76 @@ struct MenuModelTests {
         #expect(hosts.count == 2)
         #expect(hosts[0] == ("h1", "laptop · connected", false))
         #expect(hosts[1] == ("h2", "studio · authentication failed — retry", true))
+    }
+
+    @Test("sums the hosts up in one row, in the same words the rows use")
+    func hostSummaryText() {
+        func text(_ statuses: [HostStatus]) -> String? {
+            summary(build(model(hostStatuses: statuses.enumerated().map {
+                TrayHostStatus(hostId: "h\($0.offset)", label: "host\($0.offset)", status: $0.element)
+            })))
+        }
+        #expect(text([.connected, .connected, .connected]) == "3 hosts connected")
+        #expect(text([.connected]) == "1 host connected")
+        #expect(text([.connected, .connected, .disconnected]) == "2 hosts connected, 1 disconnected")
+        // Connected leads even when it is not the first host in the list, and
+        // the words are `statusText`'s so the summary and the row it hides
+        // never name one state two ways.
+        #expect(text([.unauthorized, .connected]) == "1 host connected, 1 authentication failed")
+        #expect(text([.connecting, .invalid]) == "1 host connecting, 1 invalid configuration")
+        // No connected host at all: the noun goes on whatever is first instead
+        // of claiming "0 hosts connected".
+        #expect(text([.disconnected, .disconnected]) == "2 hosts disconnected")
+    }
+
+    @Test("summarises no hosts as nothing at all, rather than an empty row")
+    func hostSummaryEmpty() {
+        // `build` guards this, but the function is public, and "" reaching a
+        // row would draw a blank one that still highlights and still clicks.
+        #expect(MenuModel.hostSummary([]) == "")
+    }
+
+    @Test("counts every status the daemon can report, so none is summarised away")
+    func summaryCoversEveryStatus() {
+        // `hostSummary` walks `summaryOrder` first and anything left over
+        // after it. That leftover branch is unreachable only while these two
+        // agree — and the day `HostStatus` grows a case, this is what says so,
+        // rather than a summary that quietly adds up to fewer hosts than the
+        // rows underneath it.
+        #expect(Set(MenuModel.summaryOrder) == Set(HostStatus.allCases))
+        #expect(MenuModel.summaryOrder.count == HostStatus.allCases.count)
+    }
+
+    @Test("hides the host rows until the summary is expanded, and never hides the summary")
+    func hostsCollapse() {
+        let hosts = [
+            TrayHostStatus(hostId: "h1", label: "laptop", status: .connected),
+            TrayHostStatus(hostId: "h2", label: "studio", status: .disconnected),
+        ]
+        let collapsed = build(model(hostStatuses: hosts))
+        #expect(summary(collapsed) == "1 host connected, 1 disconnected")
+        #expect(hostRows(collapsed).isEmpty)
+
+        let expanded = build(model(hostStatuses: hosts), hostsExpanded: true)
+        #expect(summary(expanded) == "1 host connected, 1 disconnected")
+        #expect(hostRows(expanded) == ["laptop · connected", "studio · disconnected"])
+    }
+
+    @Test("carries its own expanded state, so the row can draw which way it points")
+    func summaryCarriesState() {
+        func expanded(_ items: [MenuItem]) -> Bool? {
+            items.compactMap { if case .hostsSummary(_, let expanded) = $0 { expanded } else { nil } }.first
+        }
+        let hosts = [TrayHostStatus(hostId: "h1", label: "laptop", status: .connected)]
+        #expect(expanded(build(model(hostStatuses: hosts))) == false)
+        #expect(expanded(build(model(hostStatuses: hosts), hostsExpanded: true)) == true)
+    }
+
+    @Test("shows no host block at all when there are no hosts, summary included")
+    func noHostsNoSummary() {
+        let items = build(model())
+        #expect(summary(items) == nil)
+        #expect(hostRows(items).isEmpty)
     }
 
     @Test("surfaces a configuration error as a row carrying the message")
@@ -164,7 +255,7 @@ struct MenuModelTests {
 
     @Test("names the invalid-entry status so a bad host is visible, not missing")
     func invalidStatus() {
-        let items = build(model(hostStatuses: [TrayHostStatus(hostId: "h1", label: "my server", status: .invalid)]))
+        let items = build(model(hostStatuses: [TrayHostStatus(hostId: "h1", label: "my server", status: .invalid)]), hostsExpanded: true)
         let labels = items.compactMap { item -> String? in
             if case .hostStatus(_, let label, _) = item { return label }
             return nil

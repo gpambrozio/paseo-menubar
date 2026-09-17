@@ -1,4 +1,4 @@
-public enum HostStatus: String, Equatable, Sendable {
+public enum HostStatus: String, Equatable, Sendable, CaseIterable {
     case connecting
     case connected
     case disconnected

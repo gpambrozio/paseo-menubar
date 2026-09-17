@@ -2,21 +2,35 @@ import AppKit
 import PaseoIconCore
 import SwiftUI
 
-/// The menu bar app. No window is ever created: `MenuBarExtra` in menu style
-/// is the whole interface, and every action lives in the menu.
+/// The menu bar app. `MenuBarExtra` in window style is the whole interface, and
+/// every action lives in its panel. No free-standing window is ever created:
+/// the panel belongs to the menu bar item and closes when it resigns key.
 @main
 struct PaseoIconApp: App {
     @NSApplicationDelegateAdaptor private var appDelegate: AppDelegate
     @State private var coordinator = AppCoordinator()
+    /// Collapsed by default: the host block answers "is everything connected?"
+    /// in one line, and the names behind it are the follow-up question. Scene
+    /// state, so the answer survives the panel closing.
+    @State private var hostsExpanded = false
 
     var body: some Scene {
         MenuBarExtra {
             MenuContent(
-                items: MenuModel.build(coordinator.model, loginItemEnabled: coordinator.loginItemEnabled),
-                coordinator: coordinator
+                items: MenuModel.build(
+                    coordinator.model,
+                    loginItemEnabled: coordinator.loginItemEnabled,
+                    hostsExpanded: hostsExpanded
+                ),
+                coordinator: coordinator,
+                toggleHosts: { hostsExpanded.toggle() }
             )
         } label: {
-            MenuBarLabel(icon: coordinator.model.icon, count: coordinator.model.count)
+            MenuBarLabel(
+                icon: coordinator.model.icon,
+                count: coordinator.model.count,
+                needsAttention: coordinator.model.needsAttention
+            )
                 .task {
                     // The delegate is created by AppKit and cannot reach the
                     // scene's state on its own; this is the one place both
@@ -25,9 +39,13 @@ struct PaseoIconApp: App {
                     coordinator.start()
                 }
         }
-        // Stated rather than left to `.automatic`: the window style would put a
-        // panel on screen, and this app must never create a window.
-        .menuBarExtraStyle(.menu)
+        // Window style, stated rather than left to `.automatic`. The panel is
+        // the whole interface: menu style makes every row an `NSMenuItem`,
+        // which drops view modifiers and draws a non-clickable row in the
+        // disabled grey, so a section heading could not be given the weight it
+        // needed. This is still not a free-standing window — the panel belongs
+        // to the menu bar item and closes when it resigns key.
+        .menuBarExtraStyle(.window)
     }
 }
 

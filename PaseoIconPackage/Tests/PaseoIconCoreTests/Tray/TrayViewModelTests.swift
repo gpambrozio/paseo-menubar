@@ -64,6 +64,43 @@ struct TrayViewModelTests {
         #expect(model.icon == .failed)
     }
 
+    @Test("asks for a red icon exactly when a workspace needs the user")
+    func needsAttention() {
+        // The three counted buckets each raise it on their own, and the two
+        // resting ones never do — a workspace that is merely working is not a
+        // reason to paint the menu bar red.
+        for status in ["needs_input", "failed", "attention"] {
+            let model = build([Fixture.host([Fixture.workspace("w1", status: status)])])
+            #expect(model.needsAttention, "\(status) should need attention")
+        }
+        for status in ["running", "done"] {
+            let model = build([Fixture.host([Fixture.workspace("w1", status: status)])])
+            #expect(!model.needsAttention, "\(status) should not need attention")
+        }
+        #expect(!build([Fixture.host()]).needsAttention)
+        #expect(!TrayViewModel.empty.needsAttention)
+    }
+
+    @Test("keeps the counted buckets at the head of the section order, which is what makes the icon rule true")
+    func countedBucketsLeadSectionOrder() {
+        // `needsAttention` asks whether the icon's bucket is a counted one, and
+        // that is the same question as "is the count above zero" only because
+        // the counted buckets are the first three in section order. Reorder
+        // `sectionOrder` and the icon would stop going red for a fleet that
+        // needs the user, with nothing else to notice.
+        let leading = TrayViewModelBuilder.sectionOrder.prefix(TrayViewModelBuilder.countedBuckets.count)
+        #expect(Set(leading) == TrayViewModelBuilder.countedBuckets)
+    }
+
+    @Test("does not ask for a red icon for a bucket this build does not know, or a host it cannot vouch for")
+    func needsAttentionExclusions() {
+        // The two cases where workspaces exist but the icon must stay calm:
+        // an unknown state is exactly the thing this build cannot judge, and a
+        // disconnected host's rows are data nothing can vouch for.
+        #expect(!build([Fixture.host([Fixture.workspace("w1", status: "brand_new_bucket")])]).needsAttention)
+        #expect(!build([Fixture.host([Fixture.workspace("w1", status: "needs_input")], status: .disconnected)]).needsAttention)
+    }
+
     @Test("orders sections the way the Paseo sidebar does")
     func sectionOrder() {
         // All five buckets, supplied in an order matching none of them, so
@@ -299,10 +336,29 @@ struct ResolveHostNameTests {
         #expect(tiers(label: nil, hostname: "") == "srv-id")
     }
 
-    @Test("renders an explicit label verbatim, suffix and all")
-    func labelVerbatim() {
-        // A user who types `foo.local` means it; only the reported hostname is shortened.
-        #expect(tiers(label: "foo.local") == "foo.local")
+    @Test("shortens the label the same way it shortens the hostname")
+    func labelShortened() {
+        // The label comes from the Paseo desktop app's profile, whose default
+        // is the machine's mDNS name, so it carries the same suffix and gets
+        // the same treatment.
+        #expect(tiers(label: "foo.local") == "foo")
+        #expect(tiers(label: "foo.localdomain") == "foo")
+        #expect(tiers(label: "FOO.LOCAL") == "FOO")
+        // Still only at the end, and still only as a whole label.
+        #expect(tiers(label: "mylocal") == "mylocal")
+        #expect(tiers(label: "box.local.example.com") == "box.local.example.com")
+    }
+
+    @Test("falls through rather than rendering a label that is nothing but a suffix")
+    func labelNeverEmpty() {
+        #expect(tiers(label: ".local") == "live-hostname")
+    }
+
+    @Test("leaves the endpoint alone, because it is an address and not a name")
+    func endpointVerbatim() {
+        // The last resort names what the tray dials. Trimming it would show a
+        // string that is not the address, and IPv6 literals and ports live here.
+        #expect(resolveHostName(label: nil, hostname: nil, serverId: nil, endpointHint: "build-box.local:6767") == "build-box.local:6767")
     }
 }
 
@@ -328,6 +384,19 @@ struct TrayViewModelHostNamingTests {
             workspacesTruncated: true
         )])
         #expect(model.truncatedHosts == ["build-box"])
+    }
+
+    @Test("drops the mDNS suffix from a registry label in both the host lines and the rows")
+    func labelSuffixEverywhere() {
+        // The two places a host name is shown. The label is the Paseo desktop
+        // app's, whose default is the machine's mDNS name, so this is the one
+        // that actually reaches most menus.
+        let model = TrayViewModelBuilder.build(hosts: [
+            Fixture.host([Fixture.workspace("w1")], label: "build-box.local", serverId: "srv-1"),
+            Fixture.host(hostId: "h2", label: "studio.localdomain", serverId: "srv-2"),
+        ])
+        #expect(model.hostStatuses.map(\.label) == ["build-box", "studio"])
+        #expect(model.sections.first?.rows.first?.hostLabel == "build-box")
     }
 
     @Test("uses the resolved name for the per-row host label with more than one host")

@@ -39,7 +39,7 @@ written before its code, and review changed both of them afterwards.
 
 The rule that shapes this codebase: **if it does not touch AppKit or SwiftUI, it does not
 belong in the app target.** Everything else is pure or takes its collaborators by
-injection, and is tested without a menu bar. That is why 336 tests can cover a menu bar
+injection, and is tested without a menu bar. That is why 349 tests can cover a menu bar
 app that no agent can see.
 
 | Path under `PaseoIconPackage/Sources/` | Owns |
@@ -66,7 +66,7 @@ app that no agent can see.
 | `PaseoIconCore/Launch/OpenPaseo.swift` | Deep links, with the browser fallback. |
 | `PaseoIcon/TrayIcons.swift` | The five bucket glyphs as template images. |
 | `PaseoIcon/MenuBarLabel.swift` | The rendered menu bar item: glyph plus count. |
-| `PaseoIcon/MenuContent.swift` | Renders `[MenuItem]`. Decides nothing. |
+| `PaseoIcon/MenuContent.swift` | Renders `[MenuItem]` as the panel's rows, the metrics they share, and the shrink the panel will not do for itself. Decides nothing. |
 | `PaseoIcon/AppCoordinator.swift` | The object graph, login item, alerts, `NSWorkspace`. |
 | `PaseoIcon/PaseoIconApp.swift` | The `MenuBarExtra` scene and the app delegate. |
 
@@ -76,9 +76,13 @@ layer, where nothing could test it. If you find yourself adding a decision to
 
 ## Critical rules
 
-- **Never create a window.** `MenuBarExtra` in menu style is the whole interface, and the
-  style is stated rather than inferred for that reason. A preferences window is
-  deliberately deferred.
+- **The panel is the whole interface, and there is still no window.** `MenuBarExtra` is in
+  window style, stated rather than inferred. It was menu style until 2026-09-17: an
+  `NSMenu` row is an `NSMenuItem`, which drops the view modifiers on the way in and draws a
+  non-clickable row in the disabled grey however the title is attributed — so the section
+  headings could not be given weight and colour, and nothing else could be styled either.
+  The panel belongs to the menu bar item and closes when it resigns key; a free-standing
+  window, a preferences window included, is still deliberately deferred.
 - **The wire is pinned to `@getpaseo/protocol` 0.4.0 and `protocolVersion: 1`**, and the
   Swift structs are a hand-written copy of that slice. Paseo guarantees that old clients
   parse messages from new daemons; that guarantee is what makes the copy safe. The npm
@@ -136,7 +140,7 @@ layer, where nothing could test it. If you find yourself adding a decision to
 ```bash
 SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm install   # Homebrew libvips breaks sharp's prebuild
 npm test                                    # vitest (scripts) then swift test
-swift test --package-path PaseoIconPackage  # 336 Swift tests, 32 suites
+swift test --package-path PaseoIconPackage  # 349 Swift tests, 32 suites
 npx vitest run                              # 46 tests, 4 files — build tooling only
 npm run typecheck
 npm run icons                               # tray glyphs and the app icon
@@ -257,6 +261,12 @@ item's checkmark, and a real relay host are verifiable only by a human running t
 so plainly rather than narrating a check you did not perform.
 
 ## Known issues
+
+- **The panel has no keyboard navigation.** An `NSMenu` gave arrow keys, type-select,
+  Escape, and full VoiceOver menu semantics for free; the window-style panel that replaced
+  it on 2026-09-17 gives none of them, and nothing here has been checked with VoiceOver by
+  a human. ⌘Q still works, because the Quit row states the shortcut. Anyone restoring this
+  owns it row by row: focus, `onKeyPress`, and a focus ring that reads.
 
 - Past 200 agents on one host, an agent can be capped out of the seed and its workspace
   then opens in the browser instead of the app. The daemon's `status_priority` scoring

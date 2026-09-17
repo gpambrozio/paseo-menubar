@@ -69,6 +69,14 @@ public struct TrayViewModel: Equatable, Sendable {
     /// they belong in; that decision lives in the daemon.
     public let unknownStates: [String: Int]
 
+    /// True when at least one workspace sits in a bucket that needs the user:
+    /// the same three buckets `count` is drawn from. The menu bar item draws
+    /// itself red on this, so the rule lives here rather than in the label,
+    /// where no test could reach it. `icon` is the first non-empty bucket in
+    /// section order and the three counted buckets lead that order, so this
+    /// says the same thing `count > 0` does, in the icon's own terms.
+    public var needsAttention: Bool { TrayViewModelBuilder.countedBuckets.contains(icon) }
+
     init(
         icon: TrayIconState,
         count: Int,
@@ -224,7 +232,13 @@ public func resolveHostName(_ host: HostSnapshot) -> String {
 }
 
 public func resolveHostName(label: String?, hostname: String?, serverId: String?, endpointHint: String) -> String {
-    label ?? shortenHostname(hostname) ?? serverId ?? endpointHint
+    // The label is shortened like the hostname. Labels are not typed here:
+    // they are the Paseo desktop app's profile names, and Paseo's own default
+    // is the machine's mDNS name, so leaving them verbatim put `.local` back on
+    // the rows the shortening exists to clean. A label that is nothing but a
+    // suffix falls through to the next tier rather than rendering empty, the
+    // same way a hostname does.
+    shortenHostname(label) ?? shortenHostname(hostname) ?? serverId ?? endpointHint
 }
 
 /// mDNS and default-domain suffixes, longest first so `.localdomain` wins.
@@ -232,10 +246,12 @@ private let hostnameSuffixes = [".localdomain", ".local"]
 
 /// Drops the trailing `.local` / `.localdomain` a machine reports over mDNS:
 /// `build-box.local` is the same machine as `build-box`, and the suffix is an
-/// artifact of how the name is announced. Only the daemon-reported hostname
-/// goes through here; an explicit label is rendered verbatim, because a user
-/// who types `foo.local` means it. Returns nil when stripping would leave
-/// nothing, so a host named exactly `.local` falls through to the next tier.
+/// artifact of how the name is announced. Both display tiers go through here,
+/// the registry's label and the daemon's hostname, so one machine reads the
+/// same whichever one the row happens to be using. The endpoint is left alone:
+/// it is an address that was dialed, not a name that is shown. Returns nil when
+/// stripping would leave nothing, so a name of exactly `.local` falls through
+/// to the next tier.
 func shortenHostname(_ hostname: String?) -> String? {
     guard let hostname else { return nil }
     // A fully-qualified name may carry the DNS root dot; it is not part of the label.

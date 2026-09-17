@@ -21,6 +21,9 @@ public enum MenuItem: Equatable, Sendable, Identifiable {
     case note(index: Int, text: String)
     /// The fix for every configuration error is in the Paseo app.
     case configError(detail: String)
+    /// The one row the host block always has: how many hosts there are and what
+    /// state they are in. Clicking it shows or hides the per-host rows.
+    case hostsSummary(label: String, expanded: Bool)
     case hostStatus(hostId: String, label: String, retryable: Bool)
     case openApp
     case loginItem(enabled: Bool)
@@ -34,6 +37,7 @@ public enum MenuItem: Equatable, Sendable, Identifiable {
         case .separator(let index): "sep:\(index)"
         case .note(let index, _): "note:\(index)"
         case .configError: "configError"
+        case .hostsSummary: "hostsSummary"
         case .hostStatus(let hostId, _, _): "host:\(hostId)"
         case .openApp: "openApp"
         case .loginItem: "loginItem"
@@ -51,16 +55,70 @@ public enum MenuModel {
         .invalid: "invalid configuration",
     ]
 
+    /// The order the summary counts statuses in: connected first, because that
+    /// is the answer to the question the row is asked, then the states that
+    /// need the user in the order they are worth knowing about.
+    static let summaryOrder: [HostStatus] = [.connected, .connecting, .disconnected, .unauthorized, .invalid]
+
+    /// "3 hosts connected", or "2 hosts connected, 1 disconnected".
+    ///
+    /// The words are `statusText`'s, the same ones the rows underneath use: a
+    /// summary that said "offline" over a row that says "disconnected" would be
+    /// two names for one state in one menu.
+    ///
+    /// Only the first group carries the noun, so the row reads as a sentence
+    /// rather than a table. A status this build does not have in
+    /// `summaryOrder` is still counted, after the known ones, because the
+    /// alternative is a summary that quietly adds up to fewer hosts than the
+    /// rows it hides.
+    public static func hostSummary(_ hosts: [TrayHostStatus]) -> String {
+        var counts: [HostStatus: Int] = [:]
+        for host in hosts { counts[host.status, default: 0] += 1 }
+        let known = summaryOrder
+        let rest = counts.keys.filter { !known.contains($0) }.sorted { $0.rawValue < $1.rawValue }
+
+        var parts: [String] = []
+        for status in known + rest {
+            guard let count = counts[status], count > 0 else { continue }
+            let text = statusText[status] ?? status.rawValue
+            if parts.isEmpty {
+                parts.append("\(count) host\(count == 1 ? "" : "s") \(text)")
+            } else {
+                parts.append("\(count) \(text)")
+            }
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    /// What separates the parts of a workspace row.
+    static let partSeparator = "  ·  "
+
+    /// The workspace's own half of the row: its name and its project. The host
+    /// is not in here — see `rowHostSuffix`.
     public static func rowLabel(_ row: TrayWorkspaceRow) -> String {
-        var parts = [row.label, row.projectName]
-        if let hostLabel = row.hostLabel { parts.append(hostLabel) }
-        return parts.joined(separator: "  ·  ")
+        [row.label, row.projectName].joined(separator: partSeparator)
+    }
+
+    /// The host's half, separator included, or nil when only one host is
+    /// configured and the rows do not name it at all.
+    ///
+    /// Separate from `rowLabel` because the panel draws it smaller and quieter:
+    /// on a row about a workspace, the machine it is on is the least of the
+    /// three things being said. It carries its own separator so that the
+    /// punctuation is quiet along with it, and so the composition stays here
+    /// rather than becoming a decision the view makes.
+    public static func rowHostSuffix(_ row: TrayWorkspaceRow) -> String? {
+        guard let hostLabel = row.hostLabel else { return nil }
+        return partSeparator + hostLabel
     }
 
     /// The whole menu, in order. Every action lives here: a menu bar item that
     /// needs a click-through for anything is an app with actions some desktops
     /// swallow.
-    public static func build(_ model: TrayViewModel, loginItemEnabled: Bool) -> [MenuItem] {
+    /// `hostsExpanded` is the panel's own state, passed in for the same reason
+    /// `loginItemEnabled` is: the menu is data, so the rows that exist are
+    /// decided here and tested here, not hidden by the view that draws them.
+    public static func build(_ model: TrayViewModel, loginItemEnabled: Bool, hostsExpanded: Bool = false) -> [MenuItem] {
         var items: [MenuItem] = []
         var separators = 0
         var notes = 0
@@ -121,7 +179,8 @@ public enum MenuModel {
 
         if !model.hostStatuses.isEmpty {
             separator()
-            for host in model.hostStatuses {
+            items.append(.hostsSummary(label: hostSummary(model.hostStatuses), expanded: hostsExpanded))
+            for host in model.hostStatuses where hostsExpanded {
                 let text = "\(host.label) · \(statusText[host.status] ?? host.status.rawValue)"
                 // Auth rejection ends the reconnect loop for good, so without
                 // the retry the only way back after fixing the password is
