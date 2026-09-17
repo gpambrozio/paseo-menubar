@@ -5397,8 +5397,11 @@ public enum MenuItem: Equatable, Sendable, Identifiable {
     /// renders one overflow row where the menu needs two.
     case overflow(bucket: WorkspaceStateBucket, label: String)
     case separator(index: Int)
-    /// A row that does nothing but say something.
-    case note(String)
+    /// A row that does nothing but say something. It is numbered for the same
+    /// reason the overflow rows carry their bucket: two hosts whose display
+    /// names resolve alike produce byte-identical truncation text, and two
+    /// rows sharing an identity means SwiftUI draws one of them.
+    case note(index: Int, text: String)
     /// The fix for every configuration error is in the Paseo app.
     case configError(detail: String)
     case hostStatus(hostId: String, label: String, retryable: Bool)
@@ -5412,7 +5415,7 @@ public enum MenuItem: Equatable, Sendable, Identifiable {
         case .workspace(let row, _): "row:\(row.id)"
         case .overflow(let bucket, _): "overflow:\(bucket.rawValue)"
         case .separator(let index): "sep:\(index)"
-        case .note(let text): "note:\(text)"
+        case .note(let index, _): "note:\(index)"
         case .configError: "configError"
         case .hostStatus(let hostId, _, _): "host:\(hostId)"
         case .openApp: "openApp"
@@ -5443,6 +5446,11 @@ public enum MenuModel {
     public static func build(_ model: TrayViewModel, loginItemEnabled: Bool) -> [MenuItem] {
         var items: [MenuItem] = []
         var separators = 0
+        var notes = 0
+        func note(_ text: String) {
+            items.append(.note(index: notes, text: text))
+            notes += 1
+        }
         func separator() {
             items.append(.separator(index: separators))
             separators += 1
@@ -5454,7 +5462,7 @@ public enum MenuModel {
         }
 
         if model.sections.isEmpty {
-            items.append(.note("No workspaces"))
+            note("No workspaces")
         } else {
             // A rule between sections, not before the first: AppKit draws a
             // leading separator as a stray line under the menu's top edge.
@@ -5471,12 +5479,12 @@ public enum MenuModel {
         // The seed page has a ceiling. Reaching it means these rows are a
         // subset, and a subset presented as the whole list is a silent cap.
         for label in model.truncatedHosts {
-            items.append(.note("Not all workspaces shown · \(label)"))
+            note("Not all workspaces shown · \(label)")
         }
         // A capped agent page costs click targets rather than rows: a
         // workspace whose agents fell off the page opens in the browser.
         for label in model.agentIndexTruncatedHosts {
-            items.append(.note("Not all agents loaded · \(label)"))
+            note("Not all agents loaded · \(label)")
         }
 
         if !model.hostStatuses.isEmpty {
@@ -5671,7 +5679,7 @@ struct MenuModelTests {
     }
 
     private func notes(_ items: [MenuItem]) -> [String] {
-        items.compactMap { if case .note(let text) = $0 { text } else { nil } }
+        items.compactMap { if case .note(_, let text) = $0 { text } else { nil } }
     }
 
     private func headings(_ items: [MenuItem]) -> [String] {
@@ -5821,6 +5829,16 @@ struct MenuModelTests {
         #expect(!build(model(), loginItemEnabled: false).contains(.loginItem(enabled: true)))
     }
 
+    @Test("keeps two identical truncation notices apart")
+    func duplicateNoteIds() {
+        // Two hosts the user named the same thing, both truncated. The rows
+        // read identically, so an id built from the text alone would make
+        // SwiftUI draw one and drop the other's notice — a silent cap.
+        let items = build(model(truncatedHosts: ["laptop", "laptop"]))
+        #expect(notes(items).filter { $0 == "Not all workspaces shown · laptop" }.count == 2)
+        #expect(Set(items.map(\.id)).count == items.count)
+    }
+
     @Test("gives every item a distinct identity, so SwiftUI does not collapse two rows")
     func distinctIds() {
         let items = build(model(
@@ -5956,7 +5974,7 @@ struct OpenPaseoTests {
 - [ ] **Step 3: Run them**
 
 Run: `swift test --package-path PaseoIconPackage --filter 'MenuModelTests|OpenPaseoTests'`
-Expected: `Test run with 27 tests in 2 suites passed`.
+Expected: `Test run with 28 tests in 2 suites passed`.
 
 - [ ] **Step 4: Mutate to prove the leading-separator and workspace-route rules bite**
 
@@ -5968,7 +5986,7 @@ Confirm green.
 - [ ] **Step 5: Run the whole suite**
 
 Run: `swift test --package-path PaseoIconPackage`
-Expected: `Test run with 313 tests in 31 suites passed`.
+Expected: `Test run with 314 tests in 31 suites passed`.
 
 - [ ] **Step 6: Commit**
 
@@ -6083,12 +6101,25 @@ enum TrayIcons {
     static func image(for bucket: WorkspaceStateBucket) throws -> NSImage {
         if let cached = cache[bucket] { return cached }
         let name = TrayViewModelBuilder.iconNames[bucket] ?? bucket.rawValue
-        guard let url = Bundle.module.url(forResource: "\(name)Template", withExtension: "png", subdirectory: "TrayIcons"),
-              let image = NSImage(contentsOf: url), image.isValid, image.size.width > 0 else {
+        // Both rasterizations, not just the 1x one. `NSImage(contentsOf:)` on a
+        // single file yields a single representation, so a Retina menu bar
+        // would draw 16px art in a 32px box for every user; Electron's
+        // `nativeImage.createFromPath` picked the `@2x` sibling up by itself
+        // and nothing here does. The PNGs also carry a 288-DPI pHYs chunk, so
+        // each representation loads claiming to be 4pt square — pinning both to
+        // the 16pt box is what makes AppKit choose by scale rather than size.
+        let box = NSSize(width: 16, height: 16)
+        let image = NSImage(size: box)
+        for suffix in ["", "@2x"] {
+            guard let url = Bundle.module.url(forResource: "\(name)Template\(suffix)", withExtension: "png", subdirectory: "TrayIcons"),
+                  let rep = NSImageRep(contentsOf: url) else { continue }
+            rep.size = box
+            image.addRepresentation(rep)
+        }
+        guard !image.representations.isEmpty, image.isValid else {
             throw TrayIconError.missing(name)
         }
         image.isTemplate = true
-        image.size = NSSize(width: 16, height: 16)
         cache[bucket] = image
         return image
     }
@@ -6197,7 +6228,7 @@ struct MenuContent: View {
             case .separator:
                 Divider()
 
-            case .note(let text):
+            case .note(_, let text):
                 Text(text)
 
             case .configError(let detail):
@@ -6215,9 +6246,14 @@ struct MenuContent: View {
                 Button("Open Paseo") { coordinator.openApp() }
 
             case .loginItem(let enabled):
-                Button(enabled ? "✓ Start at login" : "Start at login") {
-                    coordinator.setLoginItem(!enabled)
-                }
+                // A Toggle, not a Button with a tick in its title: inside a
+                // menu SwiftUI draws it in the checkmark column, which is what
+                // Electron's `type: "checkbox"` gave, and it reports a checked
+                // state to VoiceOver where a prefixed character reports none.
+                Toggle("Start at login", isOn: Binding(
+                    get: { enabled },
+                    set: { coordinator.setLoginItem($0) }
+                ))
 
             case .quit:
                 Button("Quit Paseo Icon") { coordinator.quit() }
@@ -6271,7 +6307,17 @@ final class AppCoordinator {
             }
         )
         session = RegistrySession(
-            readRegistry: { try PaseoRegistry.read(appSupportDir: Self.applicationSupportDirectory()) },
+            // Detached on purpose. A closure formed in a `@MainActor` init is
+            // isolated to the main actor, so awaiting it would run the whole
+            // read — listing the directory, verifying every block's CRC32C,
+            // decompressing snappy — between two frames of the menu bar. The
+            // TypeScript this ports was async over `fs/promises` and never had
+            // that problem.
+            readRegistry: {
+                try await Task.detached {
+                    try PaseoRegistry.read(appSupportDir: Self.applicationSupportDirectory())
+                }.value
+            },
             watch: { [weak self] onChange in self?.watcher.watch(onChange) ?? {} },
             applyConfig: { [weak self] config in self?.fleet.apply(config) },
             onConfigError: { [weak self] message in self?.store.setConfigError(message) },
@@ -6357,13 +6403,24 @@ final class AppCoordinator {
     // MARK: - Internals
 
     private func refreshLoginItem() {
-        loginItemEnabled = SMAppService.mainApp.status == .enabled
+        let enabled = SMAppService.mainApp.status == .enabled
+        // Guarded, because this runs on every rebuild and an unconditional
+        // write invalidates every observer whether or not anything changed.
+        if enabled != loginItemEnabled { loginItemEnabled = enabled }
     }
 
     private func scheduleRebuild() {
         guard rebuildTask == nil else { return }
         rebuildTask = Task { [weak self] in
-            try? await Task.sleep(for: Self.rebuildDebounce)
+            do {
+                try await Task.sleep(for: Self.rebuildDebounce)
+            } catch {
+                // Cancelled by `stop()`. Swallowing this with `try?` would let
+                // the rebuild run anyway, which is not what cancelling means.
+                // Clearing the handle keeps a later `start()` able to schedule.
+                self?.rebuildTask = nil
+                return
+            }
             guard let self else { return }
             self.rebuildTask = nil
             self.rebuild()
@@ -6371,6 +6428,10 @@ final class AppCoordinator {
     }
 
     private func rebuild() {
+        // Re-read on every rebuild, the way the Electron menu re-read it on
+        // every render. The switch lives in System Settings, outside this app,
+        // so a checkmark that only updates on relaunch is simply wrong.
+        refreshLoginItem()
         model = TrayViewModelBuilder.build(hosts: store.snapshot(), configError: store.getConfigError())
     }
 
@@ -6428,12 +6489,30 @@ struct PaseoIconApp: App {
             )
         } label: {
             MenuBarLabel(icon: coordinator.model.icon, count: coordinator.model.count)
-                .task { coordinator.start() }
+                .task {
+                    // The delegate is created by AppKit and cannot reach the
+                    // scene's state on its own; this is the one place both
+                    // exist. Weakly held there, so nothing is kept alive by it.
+                    appDelegate.coordinator = coordinator
+                    coordinator.start()
+                }
         }
+        // Stated rather than left to `.automatic`: the window style would put a
+        // panel on screen, and this app must never create a window.
+        .menuBarExtraStyle(.menu)
     }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Set by the scene once both exist. Quitting from the menu calls `stop()`
+    /// itself, but logging out, shutting down, and a `SIGTERM` from outside all
+    /// bypass that row — the Electron build caught those with `before-quit`.
+    weak var coordinator: AppCoordinator?
+
+    func applicationWillTerminate(_ notification: Notification) {
+        coordinator?.stop()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // No dock icon; this app is the menu bar item. The bundle sets
         // LSUIElement too, but `swift run` has no Info.plist.
@@ -6454,6 +6533,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let alert = NSAlert()
             alert.messageText = "Paseo Icon — failed to start"
             alert.informativeText = errorText(error)
+            // An accessory app is not frontmost, so without this the alert can
+            // open behind every other window while the main thread sits in its
+            // modal loop: no menu bar item, nothing to click, nothing to quit.
+            NSApp.activate()
             alert.runModal()
             NSApplication.shared.terminate(nil)
         }
@@ -6483,7 +6566,7 @@ Expected: `0`.
 - [ ] **Step 4: Run the whole suite**
 
 Run: `swift test --package-path PaseoIconPackage`
-Expected: `Test run with 313 tests in 31 suites passed`. The app target has no tests of its own by design: everything it could get wrong lives in the core, and what is left is wiring plus two AppKit calls.
+Expected: `Test run with 314 tests in 31 suites passed`. The app target has no tests of its own by design: everything it could get wrong lives in the core, and what is left is wiring plus two AppKit calls.
 
 - [ ] **Step 5: Commit**
 
@@ -6564,7 +6647,7 @@ struct FleetIntegrationTests {
         #expect(store.snapshot().first?.serverId == serverId)
 
         let items = MenuModel.build(model, loginItemEnabled: false)
-        #expect(items.contains(.note("No workspaces")))
+        #expect(items.contains(.note(index: 0, text: "No workspaces")))
         #expect(items.contains(.openApp))
         #expect(items.contains(.quit))
     }
@@ -6617,7 +6700,7 @@ Expected: `Test run with 2 tests in 1 suite passed`, in about half a second per 
 - [ ] **Step 3: Run everything, twice**
 
 Run: `swift test --package-path PaseoIconPackage && swift test --package-path PaseoIconPackage`
-Expected: `Test run with 315 tests in 32 suites passed` both times.
+Expected: `Test run with 316 tests in 32 suites passed` both times.
 
 Run: `npx vitest run && npm run typecheck`
 Expected: vitest green, typecheck silent. The Electron app is still here and still passing; nothing in Tasks 1 through 11 has touched it.
