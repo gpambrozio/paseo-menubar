@@ -4,3 +4,4 @@ release/
 assets/generated/
 PaseoIconPackage/.build/
 scripts/relay-harness/.wrangler/
+PaseoIconPackage/Sources/PaseoIcon/Resources/TrayIcons/*.png

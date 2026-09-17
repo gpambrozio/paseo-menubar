@@ -4,6 +4,11 @@ import sharp from "sharp";
 
 const ROOT = process.cwd();
 const OUT = path.join(ROOT, "assets", "generated");
+// The native app loads the tray glyphs through `Bundle.module`, so they have
+// to live inside the Swift target rather than beside it. Written here rather
+// than copied by a build step, so `swift run` and a packaged build see the
+// same files and neither can go stale against the other.
+const SWIFT_TRAY_ICONS = path.join(ROOT, "PaseoIconPackage", "Sources", "PaseoIcon", "Resources", "TrayIcons");
 const LUCIDE_ICONS_DIR = path.join(ROOT, "node_modules", "lucide-static", "icons");
 const PASEO_LOGO_PATH = path.join(ROOT, "assets", "paseo-logo.svg");
 const PASEO_APP_ICON_PATH = path.join(ROOT, "assets", "paseo-app-icon.svg");
@@ -205,6 +210,7 @@ async function writeAppIcon() {
 }
 
 await mkdir(OUT, { recursive: true });
+await mkdir(SWIFT_TRAY_ICONS, { recursive: true });
 
 for (const { file, source } of ICONS) {
   const svg = await markupFor(source);
@@ -219,6 +225,10 @@ for (const { file, source } of ICONS) {
     await assertNotBlank(buffer, outFile);
     await writeFile(outFile, buffer);
     console.log(`wrote ${outFile}`);
+
+    const swiftFile = path.join(SWIFT_TRAY_ICONS, `${file}Template${suffix}.png`);
+    await writeFile(swiftFile, buffer);
+    console.log(`wrote ${swiftFile}`);
   }
 }
 

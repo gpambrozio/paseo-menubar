@@ -22,7 +22,13 @@ let package = Package(
             name: "PaseoIconCore",
             dependencies: [.product(name: "Sodium", package: "swift-sodium")]
         ),
-        .executableTarget(name: "PaseoIcon", dependencies: ["PaseoIconCore"]),
+        .executableTarget(
+            name: "PaseoIcon",
+            dependencies: ["PaseoIconCore"],
+            // The same PNGs `npm run icons` rasterizes for the Electron build,
+            // so both apps show the same marks. Generated, not committed.
+            resources: [.copy("Resources/TrayIcons")]
+        ),
         .executableTarget(name: "PaseoIconProbe", dependencies: ["PaseoIconCore"]),
         .testTarget(
             name: "PaseoIconCoreTests",
