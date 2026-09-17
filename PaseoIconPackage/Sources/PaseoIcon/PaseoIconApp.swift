@@ -2,8 +2,9 @@ import AppKit
 import PaseoIconCore
 import SwiftUI
 
-/// The menu bar app. No window is ever created: `MenuBarExtra` in menu style
-/// is the whole interface, and every action lives in the menu.
+/// The menu bar app. `MenuBarExtra` in window style is the whole interface, and
+/// every action lives in its panel. No free-standing window is ever created:
+/// the panel belongs to the menu bar item and closes when it resigns key.
 @main
 struct PaseoIconApp: App {
     @NSApplicationDelegateAdaptor private var appDelegate: AppDelegate

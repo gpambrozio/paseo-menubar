@@ -42,8 +42,11 @@ of owning what a menu gave for free — the hit area, the pointer highlight, the
 scrolling, and closing the panel after a row is clicked. The panel is still not
 a window in the sense the standalone design forbids: it belongs to the menu bar
 item and closes when it resigns key. `MenuModel` is untouched by the change,
-which is the point of keeping the menu as data — 341 tests still describe every
-row.
+which is the point of keeping the menu as data — 349 tests still describe every
+row. What it does cost is keyboard navigation: arrow keys, type-select and the
+menu's VoiceOver semantics came with `NSMenu` and do not come with a panel. That
+is a regression, recorded in `CLAUDE.md`'s known issues rather than discovered
+later.
 
 AppKit's `NSStatusItem` is not used unless a need appears that `MenuBarExtra`
 cannot meet: a live animated status view, distinguishing left from right

@@ -39,7 +39,7 @@ written before its code, and review changed both of them afterwards.
 
 The rule that shapes this codebase: **if it does not touch AppKit or SwiftUI, it does not
 belong in the app target.** Everything else is pure or takes its collaborators by
-injection, and is tested without a menu bar. That is why 336 tests can cover a menu bar
+injection, and is tested without a menu bar. That is why 349 tests can cover a menu bar
 app that no agent can see.
 
 | Path under `PaseoIconPackage/Sources/` | Owns |
@@ -140,7 +140,7 @@ layer, where nothing could test it. If you find yourself adding a decision to
 ```bash
 SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm install   # Homebrew libvips breaks sharp's prebuild
 npm test                                    # vitest (scripts) then swift test
-swift test --package-path PaseoIconPackage  # 336 Swift tests, 32 suites
+swift test --package-path PaseoIconPackage  # 349 Swift tests, 32 suites
 npx vitest run                              # 46 tests, 4 files — build tooling only
 npm run typecheck
 npm run icons                               # tray glyphs and the app icon
@@ -261,6 +261,12 @@ item's checkmark, and a real relay host are verifiable only by a human running t
 so plainly rather than narrating a check you did not perform.
 
 ## Known issues
+
+- **The panel has no keyboard navigation.** An `NSMenu` gave arrow keys, type-select,
+  Escape, and full VoiceOver menu semantics for free; the window-style panel that replaced
+  it on 2026-09-17 gives none of them, and nothing here has been checked with VoiceOver by
+  a human. ⌘Q still works, because the Quit row states the shortcut. Anyone restoring this
+  owns it row by row: focus, `onKeyPress`, and a focus ring that reads.
 
 - Past 200 agents on one host, an agent can be capped out of the seed and its workspace
   then opens in the browser instead of the app. The daemon's `status_priority` scoring

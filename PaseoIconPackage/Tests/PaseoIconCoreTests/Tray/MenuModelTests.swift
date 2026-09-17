@@ -191,6 +191,24 @@ struct MenuModelTests {
         #expect(text([.disconnected, .disconnected]) == "2 hosts disconnected")
     }
 
+    @Test("summarises no hosts as nothing at all, rather than an empty row")
+    func hostSummaryEmpty() {
+        // `build` guards this, but the function is public, and "" reaching a
+        // row would draw a blank one that still highlights and still clicks.
+        #expect(MenuModel.hostSummary([]) == "")
+    }
+
+    @Test("counts every status the daemon can report, so none is summarised away")
+    func summaryCoversEveryStatus() {
+        // `hostSummary` walks `summaryOrder` first and anything left over
+        // after it. That leftover branch is unreachable only while these two
+        // agree — and the day `HostStatus` grows a case, this is what says so,
+        // rather than a summary that quietly adds up to fewer hosts than the
+        // rows underneath it.
+        #expect(Set(MenuModel.summaryOrder) == Set(HostStatus.allCases))
+        #expect(MenuModel.summaryOrder.count == HostStatus.allCases.count)
+    }
+
     @Test("hides the host rows until the summary is expanded, and never hides the summary")
     func hostsCollapse() {
         let hosts = [

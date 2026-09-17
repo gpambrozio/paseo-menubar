@@ -81,6 +81,17 @@ struct TrayViewModelTests {
         #expect(!TrayViewModel.empty.needsAttention)
     }
 
+    @Test("keeps the counted buckets at the head of the section order, which is what makes the icon rule true")
+    func countedBucketsLeadSectionOrder() {
+        // `needsAttention` asks whether the icon's bucket is a counted one, and
+        // that is the same question as "is the count above zero" only because
+        // the counted buckets are the first three in section order. Reorder
+        // `sectionOrder` and the icon would stop going red for a fleet that
+        // needs the user, with nothing else to notice.
+        let leading = TrayViewModelBuilder.sectionOrder.prefix(TrayViewModelBuilder.countedBuckets.count)
+        #expect(Set(leading) == TrayViewModelBuilder.countedBuckets)
+    }
+
     @Test("does not ask for a red icon for a bucket this build does not know, or a host it cannot vouch for")
     func needsAttentionExclusions() {
         // The two cases where workspaces exist but the icon must stay calm:

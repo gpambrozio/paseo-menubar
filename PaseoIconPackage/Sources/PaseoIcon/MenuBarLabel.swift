@@ -60,6 +60,10 @@ struct MenuBarLabel: View {
 
         let renderer = ImageRenderer(content: content)
         renderer.scale = 2
+        // The plain glyph, deliberately: it loses the red and the count, which
+        // is the whole signal, but a menu bar item with no image at all is one
+        // with nothing to click and no way to quit. Losing the colour beats
+        // losing the menu. `ImageRenderer` returning nil is not known to happen.
         guard let image = renderer.nsImage else { return glyph }
         // Black is a template and gets inverted by the menu bar; red must not
         // be, or the menu bar paints over it.

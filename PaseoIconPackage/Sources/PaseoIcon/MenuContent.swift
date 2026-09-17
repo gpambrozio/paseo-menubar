@@ -24,7 +24,14 @@ struct MenuContent: View {
     /// that braces — it is what handles the rows that open nothing.
     @Environment(\.dismiss) private var dismiss
 
+    /// The rows' own height, reported by the rows. It decides one thing: which
+    /// of the two layouts below the panel is in. Nothing reads it as a
+    /// measurement, so being a point out near the boundary picks a branch that
+    /// is correct either way.
+    @State private var contentHeight: CGFloat = 0
+
     var body: some View {
+        let overflows = contentHeight > MenuMetrics.maxHeight
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(items) { item in
@@ -32,25 +39,45 @@ struct MenuContent: View {
                 }
             }
             .padding(.vertical, MenuMetrics.outerPadding)
+            // Measured inside the scroll view, where the rows are laid out at
+            // their natural height whichever branch is in force. Measuring the
+            // scroll view instead would make the two branches feed each other:
+            // hug reports the content, clamp reports the cap, and the panel
+            // flips between them forever.
+            .background(GeometryReader { proxy in
+                Color.clear.preference(key: ContentHeightKey.self, value: proxy.size.height)
+            })
         }
         .frame(width: MenuMetrics.width)
         // Collapsing a row makes the content shorter; nothing else makes the
         // panel follow it.
         .background(PanelResizer(items: items))
-        // Load-bearing, and the reason the panel first came up as an empty
-        // sliver. A window-style `MenuBarExtra` sizes its panel by asking the
-        // hosting controller what fits under a proposal with no height in it,
-        // and a `ScrollView` answers zero — it will happily be any height, so
-        // it asks for none. `fixedSize` vertically makes it answer with its
-        // content's height instead, and the cap below clamps that; measured at
-        // 144pt for six rows and 520 for sixty, where the bare `ScrollView`
-        // measured 0 for both.
-        .fixedSize(horizontal: false, vertical: true)
-        // The content decides the height until it reaches the cap, after which
-        // the panel scrolls rather than growing past the screen. A menu did
-        // this by itself; a window does not.
+        // Two layouts, and the menu needs both.
+        //
+        // `fixedSize` is what keeps a short menu from opening as an empty
+        // sliver: a window-style `MenuBarExtra` sizes its panel by asking what
+        // fits under a proposal with no height in it, and a `ScrollView`
+        // answers zero, because it will be any height and so asks for none.
+        //
+        // But `fixedSize` lays the scroll view out at its *content's* height,
+        // and `maxHeight` then clamps only the size the panel is told. Past the
+        // cap those two disagree and the rows lose: at 60 rows this view
+        // measured a 560pt panel with a 1566pt scroll view inside it, so rows hang off the
+        // window with nothing to scroll — the section headings at the top and
+        // every footer row, Quit included, out of reach. A tray with nothing
+        // left to click.
+        //
+        // So past the cap the scroll view is given the cap as a real height
+        // instead, which lays it out at 560 and lets it scroll. `maxHeight`
+        // stays as the backstop for the first pass, before the rows have
+        // reported anything.
+        .fixedSize(horizontal: false, vertical: !overflows)
+        .frame(height: overflows ? MenuMetrics.maxHeight : nil)
         .frame(maxHeight: MenuMetrics.maxHeight)
         .scrollBounceBehavior(.basedOnSize)
+        .onPreferenceChange(ContentHeightKey.self) { height in
+            contentHeight = height
+        }
     }
 
     @ViewBuilder
@@ -90,7 +117,17 @@ struct MenuContent: View {
 
         case .configError(let detail):
             // The fix for every one of these is in the Paseo app.
-            MenuActionRow { coordinator.showConfigError(detail); dismiss() } label: { _ in
+            //
+            // Closed first, and the alert raised on the next turn. The alert is
+            // modal and runs its own loop, so raising it inline would spin that
+            // loop with this panel still open and key — and the panel would
+            // then only close once the alert was dismissed. Under menu style
+            // the `NSMenu` had already closed by the time an action ran, so
+            // ordering did not matter; here it does.
+            MenuActionRow {
+                dismiss()
+                Task { @MainActor in coordinator.showConfigError(detail) }
+            } label: { _ in
                 Text("Configuration error").font(MenuMetrics.font)
             }
 
@@ -107,7 +144,9 @@ struct MenuContent: View {
                     Text(label).font(MenuMetrics.font)
                 }
             }
-            .accessibilityAddTraits(.isButton)
+            // The state is the row's value; the hint says what activating it
+            // does. It is already a button, so it does not need to say so.
+            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
             .accessibilityHint(expanded ? "Hides the list of hosts" : "Shows the list of hosts")
 
         case .hostStatus(let hostId, let label, let retryable):
@@ -159,7 +198,9 @@ struct MenuContent: View {
         // The highlight paints the row white. A secondary grey run on top of
         // the accent colour reads as unreadable rather than as quiet, so under
         // the pointer the host stays the row's own colour, just weaker.
-        let quiet: AnyShapeStyle = hovering ? AnyShapeStyle(Color.white.opacity(0.75)) : AnyShapeStyle(.secondary)
+        let quiet: AnyShapeStyle = hovering
+            ? AnyShapeStyle(Color(nsColor: .selectedMenuItemTextColor).opacity(0.75))
+            : AnyShapeStyle(.secondary)
         return workspace + Text(host).font(MenuMetrics.hostFont).foregroundStyle(quiet)
     }
 
@@ -171,6 +212,12 @@ struct MenuContent: View {
             Image(nsImage: image).renderingMode(.template)
         }
     }
+}
+
+/// How tall the rows are, reported up from inside the scroll view.
+private struct ContentHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 /// The measurements every row shares. The font is the menu's own rather than
@@ -276,10 +323,14 @@ private struct MenuActionRow<Label: View>: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(hovering ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+        // The system's own selection colours, not the accent colour and white.
+        // These are what a menu row drew itself with, so they follow the user's
+        // Highlight colour and stay legible against a light accent or graphite,
+        // where white on `accentColor` does not.
+        .foregroundStyle(hovering ? AnyShapeStyle(Color(nsColor: .selectedMenuItemTextColor)) : AnyShapeStyle(.primary))
         .background(
             RoundedRectangle(cornerRadius: MenuMetrics.cornerRadius)
-                .fill(hovering ? Color.accentColor : .clear)
+                .fill(hovering ? Color(nsColor: .selectedContentBackgroundColor) : .clear)
         )
         .padding(.horizontal, MenuMetrics.outerPadding)
         .onHover { hovering = $0 }
