@@ -18,7 +18,7 @@ jobs:
       #
       # This is mapped into `env` because the `secrets` context is not available
       # in an `if:` condition, at either job or step level.
-      HAVE_SIGNING_CREDENTIALS: ${{ secrets.APPLE_ID != '' && secrets.APPLE_APP_SPECIFIC_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' }}
+      HAVE_SIGNING_CREDENTIALS: ${{ secrets.SIGNING_IDENTITY != '' && secrets.APPLE_ID != '' && secrets.APPLE_APP_SPECIFIC_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -27,6 +27,14 @@ jobs:
       - run: npm ci
         env:
           SHARP_IGNORE_GLOBAL_LIBVIPS: "1"
+      # A runner image's default Xcode is not a contract, and
+      # `swift-tools-version: 6.1` needs Xcode 16.3 or newer -- Xcode 15 cannot
+      # read the manifest at all. Select the newest Xcode the image carries and
+      # print the version, so a too-old image fails here with a number in the
+      # log rather than inside a manifest parse error.
+      - run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          swift --version
       - run: npm run typecheck
       - run: npx vitest run
       - run: swift test --package-path PaseoIconPackage
@@ -41,9 +49,14 @@ jobs:
       # base64 .p12 into a temporary keychain is what that would need. The three
       # APPLE_* variables below are what notarization itself uses.
       - if: env.HAVE_SIGNING_CREDENTIALS == 'true'
-        run: npm run dist -- --version "${GITHUB_REF_NAME#v}" --identity "$SIGNING_IDENTITY"
+        # On a tag the version is the tag; on a manual dispatch there is no tag
+        # and GITHUB_REF_NAME is a branch, which the version check rejects by
+        # design -- fall back to package.json rather than packaging "main".
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          case "$GITHUB_REF_TYPE" in tag) ;; *) version="$(node -p 'require("./package.json").version')" ;; esac
+          npm run dist -- --version "$version" --identity "$SIGNING_IDENTITY"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SIGNING_IDENTITY: ${{ secrets.SIGNING_IDENTITY }}
           # APPLE_ID is the Apple account email, APPLE_APP_SPECIFIC_PASSWORD an
           # app-specific password from appleid.apple.com (not the account

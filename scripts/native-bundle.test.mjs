@@ -97,6 +97,25 @@ describe("the cask and the native bundle agree", () => {
   });
 });
 
+describe("the packaging script is reachable the way the docs say", () => {
+  // The Electron `dist` generated the icons before packaging. When it was
+  // replaced, that step fell off, and the glyphs are gitignored -- so a clean
+  // checkout packaged an app with no menu bar image and nothing said so. The
+  // failure is invisible until someone launches the shipped build.
+  it("regenerates the icons before it packages", async () => {
+    const pkg = JSON.parse(await readFile(path.join(ROOT, "package.json"), "utf8"));
+    expect(pkg.scripts.dist).toContain("icons");
+    expect(pkg.scripts.dist).toContain("native-bundle.mjs");
+  });
+
+  it("ships the version the bundle will claim", async () => {
+    // `npm run dist` with no --version falls back to this, so a stale number
+    // here silently labels the artifacts with the previous release.
+    const pkg = JSON.parse(await readFile(path.join(ROOT, "package.json"), "utf8"));
+    expect(pkg.version).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+});
+
 describe("the README and the native bundle agree", () => {
   // check-cask-macos.mjs already phrases its failure as "the macOS version
   // README.md promises", but nothing made that true. Raising the floor without

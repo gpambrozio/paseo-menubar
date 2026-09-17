@@ -182,11 +182,19 @@ the tap — `.github/workflows/homebrew-cask.yml` renders this file and pushes t
 result to `gpambrozio/homebrew-tap`, so an edit made in the tap is overwritten by
 the next release.
 
-- **`npm run dist` is `scripts/native-bundle.mjs`.** It builds the Swift release binary,
-  assembles `PaseoIcon.app` around it, signs with the identity you pass, notarizes, staples,
-  and only then writes the dmg and the zip. That order matters: the Electron build wrote
-  its update metadata before stapling, so the recorded size and checksum described a file
-  that no longer existed. Nothing here measures anything before the last mutation.
+- **`npm run dist` regenerates the icons, then runs `scripts/native-bundle.mjs`.** The
+  icon step is part of the script and not a thing to remember: the glyphs are generated
+  rather than committed, so packaging without them produces an app with no menu bar image.
+  The script builds the Swift release binary, assembles `PaseoIcon.app` around it, checks
+  the cask against the Info.plist it just wrote, signs with the identity you pass,
+  notarizes and staples the app, writes the dmg and the zip, then signs and notarizes the
+  dmg as well. That order matters: the Electron build wrote its update metadata before
+  stapling, so the recorded size and checksum described a file that no longer existed.
+  Nothing here measures anything before the last mutation.
+- **The dmg gets its own signature and ticket.** Homebrew never needs it — it mounts the
+  image and copies the stapled app out — but someone who downloads the dmg from the
+  releases page opens the image itself, and an unsigned one earns a Gatekeeper warning
+  before they ever reach the app.
 - **The cask token is `paseo-menubar`, the display name is `Paseo Icon`, and the
   bundle is `PaseoIcon.app`.** All three are correct and all three are different.
   `BUNDLE_NAME` in `scripts/native-bundle.mjs` is what names the bundle directory, and
@@ -197,8 +205,8 @@ the next release.
   `PaseoIconPackage/Package.swift`, `MIN_MACOS` in `scripts/native-bundle.mjs`,
   `depends_on macos: :sonoma` in the cask, and the sentence in `README.md`. Three checks
   hold them together — `native-bundle.test.mjs` compares the script against the cask and
-  the README, and `scripts/check-cask-macos.mjs` repeats the cask comparison against the
-  real built bundle. The floor is 14 rather than 13 because the app uses the Observation
+  the README, and `npm run dist` calls `assertCaskMatchesBundle` from
+  `scripts/check-cask-macos.mjs` against the Info.plist of the bundle it just assembled. The floor is 14 rather than 13 because the app uses the Observation
   framework. The failure they prevent is invisible to the maintainer: the cask installs
   happily on the older macOS and the app then refuses to launch, on someone else's machine.
 - **Release assets are hyphenated** — `Paseo-Icon-0.4.0-arm64.dmg`. The packaging script

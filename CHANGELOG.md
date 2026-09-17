@@ -7,6 +7,32 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Entries describe what changed for someone running the app. Refactors, tests, and
 documentation are left to the git history.
 
+## [Unreleased]
+
+**This release requires macOS 14 (Sonoma) or later.** Earlier releases ran on
+macOS 13.
+
+### Changed
+
+- The app is now a native Swift menu-bar app rather than an Electron one. It
+  reads the same host registry, shows the same five state buckets with the same
+  labels and order, opens the same deep links, and installs through the same
+  Homebrew cask, so there is nothing to reconfigure. It launches faster and uses
+  a fraction of the memory.
+- A workspace in a state this version does not recognise now gets its own row
+  saying so. It used to disappear, which made a busy fleet look idle after a
+  Paseo update added a state.
+- The menu bar glyph is drawn at Retina scale. It was being drawn at half
+  resolution on every Retina display.
+
+### Fixed
+
+- A corrupted entry in the desktop app's storage could make the menu bar item
+  vanish on every launch, with no error to explain it. Those reads are now
+  bounded and report as a named error row.
+- Two menu rows that happened to read the same could collapse into one, hiding
+  an overflow or truncation notice. Each row now carries its own identity.
+
 ## [0.3.0] — 2026-09-03
 
 **This release requires macOS 13 or later.** Earlier releases ran on macOS 12.

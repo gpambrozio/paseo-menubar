@@ -23,8 +23,9 @@ exactly right for an app icon and wrong for a template image, so the two files
 stay separate rather than one being derived from the other.
 
 `scripts/make-icons.mjs` renders it into `generated/icon.png` at 1024px with a
-red notification badge over the bottom-right corner, and `electron-builder.yml`
-points `mac.icon` at that file. The badge is the only thing distinguishing this
-icon from Paseo's own app icon, which is the intent — same family, and the dot
-says "indicator". `generated/icon.png` is build input, not a runtime asset, so
-`electron-builder.yml` excludes it from the packaged app.
+red notification badge over the bottom-right corner, and `scripts/native-bundle.mjs`
+turns that single PNG into the bundle's `icon.icns` with `sips` and `iconutil`.
+The badge is the only thing distinguishing this icon from Paseo's own app icon,
+which is the intent — same family, and the dot says "indicator".
+`generated/icon.png` is build input, not a runtime asset: only the `.icns` it
+produces is copied into the app.

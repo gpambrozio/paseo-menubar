@@ -14,6 +14,7 @@
 import { spawn } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { assertCaskMatchesBundle } from "./check-cask-macos.mjs";
 
 /** The bundle directory name. Not the display name, and not the cask token. */
 export const BUNDLE_NAME = "PaseoIcon";
@@ -183,24 +184,50 @@ export async function sign(app, identity) {
 }
 
 /**
- * Submits, waits, and staples. Apple accepting the submission is not the same
- * as the ticket being attached, so both are read back off the finished bundle.
+ * The disk image gets its own signature and its own ticket. Homebrew never
+ * needs this -- it mounts the image and copies the stapled app out -- but a
+ * person who downloads the dmg from the releases page opens the image itself,
+ * and an unsigned one earns a Gatekeeper warning before they ever see the app.
+ * The Electron build signed and notarized the dmg for the same reason.
  */
-export async function notarize(app, out) {
+export async function signDmg(dmg, identity) {
+  await runOrThrow("codesign", ["--force", "--timestamp", "--sign", identity, dmg], "Signing the dmg");
+  await runOrThrow("codesign", ["--verify", "--strict", dmg], "Verifying the dmg signature");
+}
+
+/**
+ * Submits, waits, and staples, for either the app bundle or the disk image.
+ * Apple accepting the submission is not the same as the ticket being attached,
+ * so both are read back off the finished artifact.
+ *
+ * A bundle has to be zipped to be submitted; a dmg is already a single file and
+ * goes as-is. The Gatekeeper assessment differs for the same reason — an app is
+ * assessed as something to execute, a dmg as something to open.
+ */
+export async function notarize(target, out) {
   const credentials = readCredentials();
+  const isDmg = target.endsWith(".dmg");
   const zip = path.join(out, "notarize.zip");
   // Scratch, not an artifact: removed on the way out whether Apple accepted or
   // refused, so a rejected submission does not leave it beside the real dmg.
   try {
-    await runOrThrow("ditto", ["-c", "-k", "--keepParent", app, zip], "Zipping for notarization");
-    console.log(`submitting ${path.basename(app)} to Apple; this waits on their queue`);
-    const output = await runOrThrow("xcrun", ["notarytool", "submit", zip, ...credentials, "--wait"], "Notarizing");
+    let submission = target;
+    if (!isDmg) {
+      await runOrThrow("ditto", ["-c", "-k", "--keepParent", target, zip], "Zipping for notarization");
+      submission = zip;
+    }
+    console.log(`submitting ${path.basename(target)} to Apple; this waits on their queue`);
+    const output = await runOrThrow("xcrun", ["notarytool", "submit", submission, ...credentials, "--wait"], "Notarizing");
     // notarytool exits 0 for a submission that finished but was rejected, so the
     // status line is what actually decides.
-    if (!/status:\s*Accepted/i.test(output)) throw new Error(`Apple did not accept the app:\n${output}`);
-    await runOrThrow("xcrun", ["stapler", "staple", app], "Stapling");
-    await runOrThrow("xcrun", ["stapler", "validate", app], "Validating the staple");
-    await runOrThrow("spctl", ["-a", "-t", "exec", "-vv", app], "Gatekeeper assessment");
+    if (!/status:\s*Accepted/i.test(output)) throw new Error(`Apple did not accept ${path.basename(target)}:\n${output}`);
+    await runOrThrow("xcrun", ["stapler", "staple", target], "Stapling");
+    await runOrThrow("xcrun", ["stapler", "validate", target], "Validating the staple");
+    await runOrThrow(
+      "spctl",
+      isDmg ? ["-a", "-t", "open", "--context", "context:primary-signature", "-vv", target] : ["-a", "-t", "exec", "-vv", target],
+      "Gatekeeper assessment",
+    );
   } finally {
     await rm(zip, { force: true });
   }
@@ -250,7 +277,25 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const app = await buildBundle({ root, version });
   console.log(`built ${app}`);
 
-  const identity = args.get("identity") ?? process.env.CODESIGN_IDENTITY;
+  // Read off the bundle that was just assembled, not off a constant. The test
+  // suite already compares the cask against MIN_MACOS; this compares it against
+  // the Info.plist that will actually ship, which is the only artifact that can
+  // disagree with both. The failure it prevents is invisible to whoever runs
+  // this: the cask installs on the older macOS and the app refuses to launch,
+  // on someone else's machine.
+  const { floor, symbol } = assertCaskMatchesBundle(
+    await readFile(path.join(root, "packaging", "homebrew", "paseo-menubar.rb"), "utf8"),
+    await readFile(path.join(app, "Contents", "Info.plist"), "utf8"),
+  );
+  console.log(`cask requires macOS ${floor} (:${symbol}), matching the built bundle`);
+
+  let identity = args.get("identity") ?? process.env.CODESIGN_IDENTITY;
+  // `--identity ""` parses as the flag with no value, which this Map records as
+  // boolean `true`. Signing with that reaches `codesign --sign true`, whose
+  // failure names neither the flag nor the empty secret behind it.
+  if (identity === true) {
+    throw new Error("--identity was given with no value; pass the certificate's common name or leave the flag out");
+  }
   if (!identity) {
     // Unsigned is a legitimate local build; shipping one is not, so it says so.
     console.log("no --identity and no CODESIGN_IDENTITY: leaving the bundle unsigned, which is fine locally and never shippable");
@@ -267,5 +312,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   console.log("notarized and stapled");
 
   const { dmg, zip } = await makeArtifacts({ app, out, version });
-  console.log(`wrote ${path.basename(dmg)} and ${path.basename(zip)}`);
+  await signDmg(dmg, identity);
+  await notarize(dmg, out);
+  console.log(`wrote ${path.basename(dmg)} and ${path.basename(zip)}, both notarized`);
 }

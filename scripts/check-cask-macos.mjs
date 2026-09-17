@@ -10,10 +10,11 @@
 // machine is newer. Under Electron this used to drift on its own, with an
 // Electron major raising the floor with no diff here at all.
 //
-// This runs from `npm run dist`, at the end of packaging, rather than from the
-// test suite. native-bundle.test.mjs compares the cask against `MIN_MACOS`
-// early; this reads the built app's Info.plist, which is the only artifact that
-// can disagree with both. Packaging is also the only moment the answer matters.
+// native-bundle.mjs imports `assertCaskMatchesBundle` and calls it during
+// `npm run dist`, right after the bundle is assembled. native-bundle.test.mjs
+// compares the cask against `MIN_MACOS` early; this reads the built app's
+// Info.plist, which is the only artifact that can disagree with both. The
+// command-line entry point below is for checking a bundle by hand.
 //
 // The comparison itself is a pure function so it is tested against fixtures
 // instead of against a whole build. Everything in scripts/ is build tooling
@@ -102,7 +103,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
 
   const appPath =
-    args.get("app") ?? path.join(process.cwd(), "release", "mac-arm64", "PaseoIcon.app");
+    args.get("app") ?? path.join(process.cwd(), "release", "native", "PaseoIcon.app");
   const caskPath = path.join(process.cwd(), "packaging", "homebrew", "paseo-menubar.rb");
 
   const { floor, symbol } = assertCaskMatchesBundle(

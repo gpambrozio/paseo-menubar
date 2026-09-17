@@ -27,6 +27,14 @@ jobs:
           # Homebrew libvips, but keeping the flag here matches release.yml and
           # the documented local install.
           SHARP_IGNORE_GLOBAL_LIBVIPS: "1"
+      # A runner image's default Xcode is not a contract, and
+      # `swift-tools-version: 6.1` needs Xcode 16.3 or newer -- Xcode 15 cannot
+      # read the manifest at all. Select the newest Xcode the image carries and
+      # print the version, so a too-old image fails here with a number in the
+      # log rather than inside a manifest parse error.
+      - run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          swift --version
       - run: npm run typecheck
       - run: npx vitest run
       - run: swift test --package-path PaseoIconPackage

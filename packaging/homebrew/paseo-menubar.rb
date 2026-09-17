@@ -9,7 +9,7 @@
 #   app          The bundle is PaseoIcon.app, not "Paseo Icon.app". BUNDLE_NAME
 #                in scripts/native-bundle.mjs is what names the bundle
 #                directory. native-bundle.test.mjs asserts the two still agree.
-#   depends_on   Neither line is decoration. `npm run dist:native` builds for
+#   depends_on   Neither line is decoration. `npm run dist` builds for
 #                the host arch only, so every published artifact is arm64;
 #                without that, Homebrew installs an app that cannot launch on
 #                Intel. The macos line has to track MIN_MACOS in

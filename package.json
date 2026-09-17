@@ -1,7 +1,7 @@
 {
   "name": "paseo-menubar",
   "productName": "Paseo Icon",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Menu-bar indicator for Paseo agents",
   "author": "Gustavo Ambrozio",
   "license": "AGPL-3.0-or-later",
@@ -13,7 +13,7 @@
     "fixtures:registry": "node scripts/make-registry-fixtures.mjs",
     "fixtures:e2ee": "node scripts/make-e2ee-fixtures.mjs PaseoIconPackage/Tests/PaseoIconCoreTests/Fixtures/e2ee-vectors.json",
     "test:swift": "swift test --package-path PaseoIconPackage",
-    "dist": "node scripts/native-bundle.mjs"
+    "dist": "npm run icons && node scripts/native-bundle.mjs"
   },
   "devDependencies": {
     "@getpaseo/server": "0.4.0",
