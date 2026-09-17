@@ -39,7 +39,9 @@ function hosts(label) {
   ]);
 }
 
-const root = path.join(fileURLToPath(new URL("../src/registry/__fixtures__", import.meta.url)));
+const root = path.join(
+  fileURLToPath(new URL("../PaseoIconPackage/Tests/PaseoIconCoreTests/Fixtures/registry", import.meta.url)),
+);
 
 async function build(name, write) {
   const dir = path.join(root, name);

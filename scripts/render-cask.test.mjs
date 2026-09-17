@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { BUNDLE_NAME } from "./native-bundle.mjs";
 import { renderCask } from "./render-cask.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -118,24 +119,19 @@ describe("renderCask", () => {
   });
 });
 
-// The cask names the bundle directory, which comes from `executableName` in
-// electron-builder.yml and not from productName. Changing that field renames
-// PaseoIcon.app and silently breaks every `brew install --cask` with an
-// "unable to locate app" long after the release ships.
-describe("the cask and electron-builder agree", () => {
-  it("installs the bundle that electron-builder.yml names", async () => {
-    const builder = await readFile(path.join(ROOT, "electron-builder.yml"), "utf8");
-    const executableName = builder.match(/^executableName:\s*(\S+)$/m)?.[1];
-
-    expect(executableName).toBeDefined();
-    expect(await template()).toContain(`  app "${executableName}.app"\n`);
+// The cask names the bundle directory and the repository it downloads from.
+// Both now come from scripts/native-bundle.mjs and package.json; renaming
+// either breaks every `brew install` with an "unable to locate app" long after
+// the release ships.
+describe("the cask and the packaging script agree", () => {
+  it("installs the bundle the packaging script builds", async () => {
+    expect(await template()).toContain(`  app "${BUNDLE_NAME}.app"\n`);
   });
 
   it("publishes to the repo the cask downloads from", async () => {
-    const builder = await readFile(path.join(ROOT, "electron-builder.yml"), "utf8");
-    const owner = builder.match(/^\s+owner:\s*(\S+)$/m)?.[1];
-    const repo = builder.match(/^\s+repo:\s*(\S+)$/m)?.[1];
-
-    expect(await template()).toContain(`https://github.com/${owner}/${repo}/releases/download/`);
+    const pkg = JSON.parse(await readFile(path.join(ROOT, "package.json"), "utf8"));
+    const repo = pkg.repository?.url?.match(/github\.com[:/]([^/]+)\/([^/.]+)/);
+    expect(repo).not.toBeNull();
+    expect(await template()).toContain(`https://github.com/${repo[1]}/${repo[2]}/releases/download/`);
   });
 });

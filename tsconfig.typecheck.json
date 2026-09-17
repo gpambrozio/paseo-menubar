@@ -1,12 +1,18 @@
-// `tsconfig.json` excludes tests because they must not be emitted into `dist`.
-// That left them unchecked, and a test kept passing a field that had been
-// deleted from the type -- vacuously, since the extra property was ignored and
-// the assertion held anyway. This config checks everything and emits nothing.
+// The app is Swift. What is left to typecheck is the build tooling under
+// scripts/, which is plain .mjs and never compiled into anything -- so this
+// config stands alone rather than extending a build config, and emits nothing.
 {
-  "extends": "./tsconfig.json",
   "compilerOptions": {
-    "noEmit": true
+    "target": "ES2023",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": false
   },
-  "include": ["src/**/*.ts", "scripts/**/*.mjs"],
+  "include": ["scripts/**/*.mjs"],
   "exclude": []
 }

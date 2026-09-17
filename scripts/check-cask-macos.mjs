@@ -1,24 +1,25 @@
 // Asserts that the Homebrew cask's `depends_on macos:` matches the macOS floor
 // the built bundle actually declares.
 //
-// Nothing in this repo sets that floor. electron-builder.yml leaves
-// `minimumSystemVersion` unset, so the bundle inherits whatever Electron
-// requires, and an Electron major can raise it with no diff here at all:
-// Electron 44 moved it from 12.0 to 13.0 while the cask still said
-// `:monterey`. That combination fails in the worst available way -- Homebrew
-// installs on the older macOS because the cask permits it, the app refuses to
-// launch, and the maintainer never sees it because their own machine is newer.
+// The floor is set in this repo now -- `MIN_MACOS` in native-bundle.mjs writes
+// it into the Info.plist, and `platforms` in Package.swift has to agree -- but
+// the check survives the move because the failure it catches does not depend on
+// where the number comes from. A cask that permits an older macOS than the
+// bundle requires fails in the worst available way: Homebrew installs happily,
+// the app refuses to launch, and the maintainer never sees it because their own
+// machine is newer. Under Electron this used to drift on its own, with an
+// Electron major raising the floor with no diff here at all.
 //
-// This runs from `npm run dist`, after electron-builder, rather than from the
-// test suite. The floor lives in the built app's Info.plist, and there is no
-// copy of it to check earlier: as of Electron 44 the package has no postinstall
-// at all, so `npm ci` never puts a binary in node_modules and a unit test has
-// nothing to read. Packaging is also the only moment the answer matters.
+// native-bundle.mjs imports `assertCaskMatchesBundle` and calls it during
+// `npm run dist`, right after the bundle is assembled. native-bundle.test.mjs
+// compares the cask against `MIN_MACOS` early; this reads the built app's
+// Info.plist, which is the only artifact that can disagree with both. The
+// command-line entry point below is for checking a bundle by hand.
 //
 // The comparison itself is a pure function so it is tested against fixtures
-// instead of against a 120MB build. It lives in scripts/ rather than src/
-// because src/ is compiled into dist/ and packaged into the asar; build tooling
-// has no business shipping to users.
+// instead of against a whole build. Everything in scripts/ is build tooling
+// that never ships: the app is a Swift package, and this file is plain .mjs
+// that nothing compiles.
 
 // Homebrew names macOS releases by symbol and the bundle records a number, so
 // the two only meet through this table. A floor outside it throws rather than
@@ -92,7 +93,28 @@ export function assertCaskMatchesBundle(caskSource, infoPlistXml) {
 }
 
 // Usage: node scripts/check-cask-macos.mjs [--app release/mac-arm64/PaseoIcon.app]
-if (import.meta.url === `file://${process.argv[1]}`) {
+// `import.meta.url` is realpath-resolved and percent-encoded; `process.argv[1]`
+// is neither. Comparing them directly makes this whole block a silent no-op for
+// a clone reached through any symlinked path, or one whose path has a space --
+// the script runs, imports, does nothing, and exits 0. For this file that
+// means writing no cask while the workflow reports success.
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+// `realpathSync` throws ENOENT for a path that does not exist, and
+// `node -e "..." some-arg` sets `process.argv[1]` to that positional -- often a
+// relative, non-existent string. Without this the module would die at
+// evaluation with a bare `ENOENT ... realpath 'v0.4.0'` and no hint that a
+// main-module guard caused it.
+const mainPath = (p) => {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+};
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === mainPath(process.argv[1])) {
   const { readFile } = await import("node:fs/promises");
   const path = await import("node:path");
 
@@ -102,7 +124,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
 
   const appPath =
-    args.get("app") ?? path.join(process.cwd(), "release", "mac-arm64", "PaseoIcon.app");
+    args.get("app") ?? path.join(process.cwd(), "release", "native", "PaseoIcon.app");
   const caskPath = path.join(process.cwd(), "packaging", "homebrew", "paseo-menubar.rb");
 
   const { floor, symbol } = assertCaskMatchesBundle(

@@ -1,40 +1,34 @@
 {
   "name": "paseo-menubar",
   "productName": "Paseo Icon",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Menu-bar indicator for Paseo agents",
   "author": "Gustavo Ambrozio",
   "license": "AGPL-3.0-or-later",
   "type": "module",
-  "main": "dist/main.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.typecheck.json",
-    "test": "vitest run",
+    "test": "vitest run && swift test --package-path PaseoIconPackage",
     "icons": "node scripts/make-icons.mjs",
     "fixtures:registry": "node scripts/make-registry-fixtures.mjs",
-    "start": "npm run build && npm run icons && electron .",
-    "dist": "npm run build && npm run icons && electron-builder && npm run check:cask-macos && npm run notarize:dmg",
-    "check:cask-macos": "node scripts/check-cask-macos.mjs",
-    "notarize:dmg": "node scripts/notarize-dmg.mjs"
-  },
-  "dependencies": {
-    "@getpaseo/client": "0.4.0",
-    "@getpaseo/protocol": "0.4.0",
-    "snappyjs": "^0.7.0",
-    "zod": "^4.5.4"
+    "fixtures:e2ee": "node scripts/make-e2ee-fixtures.mjs PaseoIconPackage/Tests/PaseoIconCoreTests/Fixtures/e2ee-vectors.json",
+    "test:swift": "swift test --package-path PaseoIconPackage",
+    "dist": "npm run icons && node scripts/native-bundle.mjs"
   },
   "devDependencies": {
     "@getpaseo/server": "0.4.0",
     "@types/node": "^26.5.0",
-    "@types/snappyjs": "^0.7.1",
     "classic-level": "^3.0.0",
-    "electron": "44.2.0",
-    "electron-builder": "^26.8.1",
     "lucide-static": "1.42.0",
     "pino": "^10.3.1",
     "sharp": "^0.35.4",
+    "tweetnacl": "^1.0.3",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.0"
+    "vitest": "^5.0.0",
+    "ws": "^8.21.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gpambrozio/paseo-menubar.git"
   }
 }

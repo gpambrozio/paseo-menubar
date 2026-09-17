@@ -7,11 +7,15 @@ on:
 jobs:
   # Deliberately the same runner, node version and commands as the `macos` job
   # in release.yml, minus the packaging step. A tag build and a PR build should
-  # mean the same thing, and macos-14 is not incidental: the registry reader
-  # resolves paths under ~/Library and the integration tests boot a real daemon
-  # in-process, so a Linux runner would be testing a different program.
+  # mean the same thing, and the runner being macOS is not incidental: the
+  # registry reader resolves paths under ~/Library and the integration tests
+  # boot a real daemon in-process, so a Linux runner would test a different
+  # program. The image also has to carry a Swift 6.1 toolchain or newer --
+  # PaseoIconPackage/Package.swift declares `swift-tools-version: 6.1`, which
+  # Xcode 15 cannot read at all. That floor has never been exercised on CI:
+  # this repository has no Actions secrets, so no run has gone green here.
   test:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -23,4 +27,14 @@ jobs:
           # Homebrew libvips, but keeping the flag here matches release.yml and
           # the documented local install.
           SHARP_IGNORE_GLOBAL_LIBVIPS: "1"
-      - run: npm run typecheck && npm test
+      # A runner image's default Xcode is not a contract, and
+      # `swift-tools-version: 6.1` needs Xcode 16.3 or newer -- Xcode 15 cannot
+      # read the manifest at all. Select the newest Xcode the image carries and
+      # print the version, so a too-old image fails here with a number in the
+      # log rather than inside a manifest parse error.
+      - run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          swift --version
+      - run: npm run typecheck
+      - run: npx vitest run
+      - run: swift test --package-path PaseoIconPackage
