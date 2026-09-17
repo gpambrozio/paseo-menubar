@@ -6034,14 +6034,31 @@ Then declare the directory as a resource. In `Package.swift`, replace the `Paseo
         ),
 ```
 
-Add the generated directory to `.gitignore`:
+Ignore the generated PNGs but keep the directory itself in the repository.
+`Package.swift` declares `Resources/TrayIcons` as a `.copy` resource, and
+SwiftPM refuses to build a target whose declared resource path does not exist —
+so ignoring the whole directory makes `swift build` *and* `swift test` fail on a
+fresh clone with a resource-copy error that never mentions the icon generator.
+An empty directory builds and tests fine; the missing glyphs then surface at
+runtime through `TrayIcons.preflight()`, which names `npm run icons` in so many
+words. That is what that error case is for.
+
+Create the directory and commit a keep file:
+
+```bash
+mkdir -p PaseoIconPackage/Sources/PaseoIcon/Resources/TrayIcons
+touch PaseoIconPackage/Sources/PaseoIcon/Resources/TrayIcons/.gitkeep
+```
+
+Add to `.gitignore`:
 
 ```
-PaseoIconPackage/Sources/PaseoIcon/Resources/TrayIcons/
+PaseoIconPackage/Sources/PaseoIcon/Resources/TrayIcons/*.png
 ```
 
 Run: `SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm run icons && ls PaseoIconPackage/Sources/PaseoIcon/Resources/TrayIcons | wc -l`
-Expected: `10` — five buckets at 1x and 2x.
+Expected: `10` — five buckets at 1x and 2x. The `.gitkeep` does not show in that
+count because `ls` hides dotfiles.
 
 - [ ] **Step 2: Write the app sources**
 
@@ -6473,7 +6490,7 @@ Expected: `Test run with 313 tests in 31 suites passed`. The app target has no t
 Do not run the app in this task; Task 12 is where a human does that.
 
 ```bash
-git add PaseoIconPackage scripts/make-icons.mjs .gitignore
+git add PaseoIconPackage PaseoIconPackage/Sources/PaseoIcon/Resources/TrayIcons/.gitkeep scripts/make-icons.mjs .gitignore
 git commit -m "feat(native): menu bar app with the rendered label and the full menu
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
