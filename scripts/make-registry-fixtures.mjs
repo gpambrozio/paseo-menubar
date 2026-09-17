@@ -1,6 +1,6 @@
 // Chromium frames a localStorage record as `_<origin>\x00\x01<key>`.
 import { ClassicLevel } from "classic-level";
-import { rm, mkdir, cp } from "node:fs/promises";
+import { rm, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -39,11 +39,7 @@ function hosts(label) {
   ]);
 }
 
-const root = path.join(fileURLToPath(new URL("../src/registry/__fixtures__", import.meta.url)));
-
-// The Swift tests read the same bytes the TypeScript ones do. Written to both
-// places by the same run, so a regeneration cannot leave them divergent.
-const swiftRoot = path.join(
+const root = path.join(
   fileURLToPath(new URL("../PaseoIconPackage/Tests/PaseoIconCoreTests/Fixtures/registry", import.meta.url)),
 );
 
@@ -58,9 +54,6 @@ async function build(name, write) {
   await Promise.all(
     RUNTIME_ARTIFACTS.map((file) => rm(path.join(dir, file), { force: true })),
   );
-  await rm(path.join(swiftRoot, name), { recursive: true, force: true });
-  await mkdir(path.dirname(path.join(swiftRoot, name)), { recursive: true });
-  await cp(dir, path.join(swiftRoot, name), { recursive: true });
   console.log(`wrote ${name}`);
 }
 

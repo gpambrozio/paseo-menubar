@@ -9,8 +9,8 @@
 // on an integrity mismatch -- and the workflow would be green. Every path
 // through renderCask either changes the line or throws.
 //
-// It lives in scripts/ rather than src/ because src/ is compiled into dist/ and
-// packaged into the asar; build tooling has no business shipping to users.
+// Everything in scripts/ is build tooling that never ships: the app itself is
+// a Swift package, and this file is plain .mjs that nothing compiles.
 
 const VERSION_PATTERN = /^(\s*version\s+)"[^"]*"$/gm;
 const SHA256_PATTERN = /^(\s*sha256\s+)"[^"]*"$/gm;

@@ -1,6 +1,6 @@
 // Boots a real `@getpaseo/server` 0.4.0 daemon on an OS-assigned port for the
-// Swift integration tests, the same way `src/daemon/daemon-harness.ts` does
-// for the vitest suite. Prints one JSON line when ready:
+// Swift integration tests, in the shape the native app parity plan sets out.
+// Prints one JSON line when ready:
 //
 //   {"port":N,"serverId":"…","daemonPublicKeyB64":"…"}
 //

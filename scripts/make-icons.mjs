@@ -36,10 +36,10 @@ const PASEO_MARK_SCALE = 1.15;
 const PASEO_MARK_STROKE = 16;
 
 // The app icon -- the Finder, Dock-recents, dmg-window, and About-panel face of
-// the app, not the tray image. electron-builder converts a single PNG into the
-// .icns itself and wants at least 512x512; 1024 is the largest slot macOS asks
-// for, so rendering that one size and letting it downsample beats hand-keeping
-// an iconset.
+// the app, not the tray image. native-bundle.mjs turns this single PNG into the
+// .icns with sips and iconutil; 1024 is the largest slot macOS asks for, so
+// rendering that one size and letting it downsample beats hand-keeping an
+// iconset.
 const APP_ICON_SIZE = 1024;
 
 // Paseo's own app icon holds its rounded tile at 88.3% of the canvas -- 452 of
