@@ -189,9 +189,12 @@ struct HostStoreTests {
     @Test("removing a workspace closes the gap without disturbing the rest")
     func removeKeepsOrder() {
         let store = seeded()
-        store.seedWorkspaces("h1", [Fixture.workspace("b"), Fixture.workspace("a"), Fixture.workspace("c")], truncated: false)
-        store.applyWorkspaceUpdate("h1", .remove(id: "a"))
-        #expect(store.snapshot().first?.workspaces.map(\.id) == ["b", "c"])
+        // Seeded so that what survives the removal is still out of id order:
+        // removing the middle of [c, b, a] leaves [c, a], where a re-sort would
+        // give [a, c]. A gap closing correctly is not evidence on its own.
+        store.seedWorkspaces("h1", [Fixture.workspace("c"), Fixture.workspace("b"), Fixture.workspace("a")], truncated: false)
+        store.applyWorkspaceUpdate("h1", .remove(id: "b"))
+        #expect(store.snapshot().first?.workspaces.map(\.id) == ["c", "a"])
     }
 
     @Test("keeps hosts in the order they were registered, not a dictionary's order")
