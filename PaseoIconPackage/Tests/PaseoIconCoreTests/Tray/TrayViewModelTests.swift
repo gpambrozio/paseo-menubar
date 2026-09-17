@@ -97,16 +97,46 @@ struct TrayViewModelTests {
         #expect(model.count == 1)
     }
 
-    @Test("drops a workspace whose bucket this build has never heard of, rather than guessing")
+    @Test("names a bucket this build has never heard of, rather than guessing or dropping it")
     func unknownBucket() {
-        // The daemon is not version-pinned. A bucket it adds tomorrow must
-        // cost that row, not the menu, and must never be counted or iconed.
+        // The daemon is not version-pinned. A bucket it adds tomorrow must not
+        // be sorted into one of these five, counted, or put on the icon — all
+        // three would be the guess the rule forbids. It must also not vanish:
+        // the spec's words are "renders as an unknown row", and three live
+        // workspaces reading as an empty fleet is the silent cap in another
+        // costume.
         let model = build([Fixture.host([
             Fixture.workspace("w1", status: "brand_new_bucket"),
             Fixture.workspace("w2", status: "needs_input"),
         ])])
         #expect(model.sections.map(\.bucket) == [.needsInput])
         #expect(model.count == 1)
+        #expect(model.unknownStates == ["brand_new_bucket": 1])
+    }
+
+    @Test("counts each unknown state separately, and keeps them off the icon")
+    func unknownBucketsCounted() {
+        let model = build([Fixture.host([
+            Fixture.workspace("w1", status: "blocked"),
+            Fixture.workspace("w2", status: "blocked"),
+            Fixture.workspace("w3", status: "quarantined"),
+        ])])
+        #expect(model.unknownStates == ["blocked": 2, "quarantined": 1])
+        #expect(model.sections.isEmpty)
+        // Whether an unknown state needs attention is the one thing this build
+        // cannot work out, so it reaches neither the glyph nor the badge.
+        #expect(model.icon == .done)
+        #expect(model.count == 0)
+    }
+
+    @Test("leaves an archived workspace out of the unknown count too")
+    func unknownBucketArchiving() {
+        // Archiving is checked before the bucket, so a row on its way out does
+        // not turn into a complaint about an unknown state.
+        let model = build([Fixture.host([
+            Fixture.workspace("w1", status: "blocked", archivingAt: "2026-08-16T00:00:00.000Z"),
+        ])])
+        #expect(model.unknownStates.isEmpty)
     }
 
     @Test("excludes workspaces being archived from counts and rows")

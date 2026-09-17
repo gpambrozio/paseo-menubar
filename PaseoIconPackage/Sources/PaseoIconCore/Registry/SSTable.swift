@@ -132,8 +132,17 @@ public enum SSTable {
 
     /// Reads one block, verifying its checksum before anything parses it.
     private static func readBlock(_ file: [UInt8], _ handle: BlockHandle) throws -> [UInt8] {
-        let end = handle.offset + handle.size + blockTrailerLength
-        guard handle.offset >= 0, handle.size >= 0, end <= file.count else { throw SSTableError.blockPastEnd }
+        // Bounded by subtraction, never by adding the three together. The
+        // conversion above stops a handle that will not fit in an `Int`, but
+        // `Int.max` fits, and `offset + size + trailer` on it overflows and
+        // traps — uncatchably, taking the whole app, where the TypeScript's
+        // doubles merely produced a number too large and threw. The file's own
+        // length is the bound, and nothing here can exceed it.
+        guard handle.offset >= 0, handle.size >= 0,
+              handle.size <= file.count - blockTrailerLength,
+              handle.offset <= file.count - blockTrailerLength - handle.size else {
+            throw SSTableError.blockPastEnd
+        }
         let contents = file[handle.offset..<(handle.offset + handle.size)]
         let compression = file[handle.offset + handle.size]
         let storedCrc = Binary.readUInt32LE(file, at: handle.offset + handle.size + 1)

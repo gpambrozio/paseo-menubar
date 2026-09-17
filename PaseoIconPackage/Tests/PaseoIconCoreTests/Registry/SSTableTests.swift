@@ -109,4 +109,35 @@ struct SSTableTests {
             try SSTable.find(in: bytes, userKey: RegistryFixtures.registryKey)
         }
     }
+
+    @Test("refuses a handle whose end overflows, rather than trapping on the addition")
+    func blockEndOverflows() throws {
+        // The test above stops a handle that will not fit in an `Int`. This one
+        // is the line after: 2^63-1 converts exactly, so the conversion lets it
+        // through, and `offset + size + trailer` is what overflows. Same
+        // unchecked footer bytes, and the failure is worse than a wrong answer —
+        // an overflow traps uncatchably, so the menu bar item disappears with no
+        // error row and nothing to click, on every launch, until Chromium
+        // compacts the file away.
+        var bytes = try RegistryFixtures.tableBytes("compacted")
+        var huge: [UInt8] = []
+        var value = UInt64(Int.max)
+        while value > 0x7f {
+            huge.append(UInt8(value & 0x7f) | 0x80)
+            value >>= 7
+        }
+        huge.append(UInt8(value))
+
+        // Metaindex handle of two zero varints, then this index handle at
+        // offset 2^63-1 with size 0, then the magic, padded to 48 bytes.
+        var footer: [UInt8] = [0x00, 0x00] + huge + [0x00]
+        footer += [UInt8](repeating: 0, count: 40 - footer.count)
+        footer += [0x57, 0xfb, 0x80, 0x8b, 0x24, 0x75, 0x47, 0xdb]
+        #expect(footer.count == 48)
+        bytes.replaceSubrange((bytes.count - 48)..., with: footer)
+
+        #expect(throws: SSTableError.blockPastEnd) {
+            try SSTable.find(in: bytes, userKey: RegistryFixtures.registryKey)
+        }
+    }
 }

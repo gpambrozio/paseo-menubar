@@ -78,7 +78,7 @@ public enum MenuModel {
             separator()
         }
 
-        if model.sections.isEmpty {
+        if model.sections.isEmpty, model.unknownStates.isEmpty {
             note("No workspaces")
         } else {
             // A rule between sections, not before the first: AppKit draws a
@@ -91,6 +91,14 @@ public enum MenuModel {
                     items.append(.overflow(bucket: section.bucket, label: "…and \(section.overflow) more"))
                 }
             }
+        }
+
+        // A bucket this build does not know, named rather than dropped. Sorted
+        // only so the menu is stable between rebuilds: the order carries no
+        // ranking, because ranking these is what this build cannot do.
+        for status in model.unknownStates.keys.sorted() {
+            let count = model.unknownStates[status] ?? 0
+            note("\(count) workspace\(count == 1 ? "" : "s") in a state this version cannot show · \(status)")
         }
 
         // The seed page has a ceiling. Reaching it means these rows are a

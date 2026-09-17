@@ -23,7 +23,11 @@ public final class HostFleet {
     /// The unusable entries behind the caller's error row, keyed by entry id
     /// so a retry can clear its own without disturbing the other hosts'.
     private var entryFailures: [(id: String, message: String)] = []
-    private var appliedFingerprint = ""
+    /// Optional rather than empty: `hostsFingerprint` returns `""` if encoding
+    /// ever fails, and an empty initial value would make that first apply a
+    /// silent no-op — no hosts, no error row, nothing to click. Nothing can be
+    /// equal to "not applied yet".
+    private var appliedFingerprint: String?
 
     public init(
         store: HostStore,

@@ -20,7 +20,8 @@ struct MenuModelTests {
         hostStatuses: [TrayHostStatus] = [],
         truncatedHosts: [String] = [],
         agentIndexTruncatedHosts: [String] = [],
-        configError: String? = nil
+        configError: String? = nil,
+        unknownStates: [String: Int] = [:]
     ) -> TrayViewModel {
         TrayViewModel(
             icon: .done,
@@ -29,7 +30,8 @@ struct MenuModelTests {
             hostStatuses: hostStatuses,
             truncatedHosts: truncatedHosts,
             agentIndexTruncatedHosts: agentIndexTruncatedHosts,
-            configError: configError
+            configError: configError,
+            unknownStates: unknownStates
         )
     }
 
@@ -186,6 +188,30 @@ struct MenuModelTests {
         // Quit is last, and the login item reflects the state it was given.
         #expect(items.last == .quit)
         #expect(!build(model(), loginItemEnabled: false).contains(.loginItem(enabled: true)))
+    }
+
+    @Test("names a bucket this build does not know, one row per state")
+    func unknownStateRows() {
+        let items = build(model(
+            sections: [TrayMenuSection(bucket: .done, rows: [row()], overflow: 0)],
+            unknownStates: ["quarantined": 1, "blocked": 3]
+        ))
+        // Sorted only for stability, and each row names its own state and count
+        // so the user can tell that their Paseo is ahead of this tray.
+        #expect(notes(items) == [
+            "3 workspaces in a state this version cannot show · blocked",
+            "1 workspace in a state this version cannot show · quarantined",
+        ])
+        #expect(Set(items.map(\.id)).count == items.count)
+    }
+
+    @Test("does not claim there are no workspaces when the only ones are unknown")
+    func unknownStatesAreNotNoWorkspaces() {
+        // The rows exist; this build just cannot place them. Saying "No
+        // workspaces" here would be the lie the count fix exists to prevent.
+        let items = build(model(unknownStates: ["blocked": 2]))
+        #expect(!notes(items).contains("No workspaces"))
+        #expect(notes(items) == ["2 workspaces in a state this version cannot show · blocked"])
     }
 
     @Test("keeps two identical truncation notices apart")

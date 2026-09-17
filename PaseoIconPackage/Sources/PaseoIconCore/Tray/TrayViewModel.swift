@@ -50,6 +50,33 @@ public struct TrayViewModel: Equatable, Sendable {
     public let agentIndexTruncatedHosts: [String]
     /// Set when the registry cannot be used; the last known-good fleet keeps running.
     public let configError: String?
+    /// Workspaces whose `status` this build does not recognise, counted by the
+    /// string the daemon sent. A newer daemon can add a bucket, and the spec is
+    /// explicit that one this build does not know "renders as an unknown row,
+    /// never a crash and never a guess" — dropping them would make a fleet of
+    /// live workspaces read as an empty one. Nothing here decides which bucket
+    /// they belong in; that decision lives in the daemon.
+    public let unknownStates: [String: Int]
+
+    init(
+        icon: TrayIconState,
+        count: Int,
+        sections: [TrayMenuSection],
+        hostStatuses: [TrayHostStatus],
+        truncatedHosts: [String],
+        agentIndexTruncatedHosts: [String],
+        configError: String?,
+        unknownStates: [String: Int] = [:]
+    ) {
+        self.icon = icon
+        self.count = count
+        self.sections = sections
+        self.hostStatuses = hostStatuses
+        self.truncatedHosts = truncatedHosts
+        self.agentIndexTruncatedHosts = agentIndexTruncatedHosts
+        self.configError = configError
+        self.unknownStates = unknownStates
+    }
 
     public static let empty = TrayViewModel(
         icon: .done, count: 0, sections: [], hostStatuses: [],
@@ -97,6 +124,7 @@ public enum TrayViewModelBuilder {
         let live = hosts.filter { $0.status == .connected }
 
         var rowsByBucket: [WorkspaceStateBucket: [TrayWorkspaceRow]] = [:]
+        var unknownStates: [String: Int] = [:]
         var counted = 0
 
         for host in live {
@@ -108,7 +136,14 @@ public enum TrayViewModelBuilder {
                 // it: the sidebar renders the same field, and a second
                 // derivation is a second answer. A bucket this build does not
                 // know is dropped rather than guessed at.
-                guard let bucket = workspace.bucket else { continue }
+                guard let bucket = workspace.bucket else {
+                    // A bucket this build does not know. Counted so the menu
+                    // can say so, because a silent drop turns a busy fleet into
+                    // an apparently empty one, and never sorted into a bucket
+                    // here — that would be the guess the rule forbids.
+                    unknownStates[workspace.status, default: 0] += 1
+                    continue
+                }
                 let row = TrayWorkspaceRow(
                     hostId: host.hostId,
                     serverId: host.serverId,
@@ -139,7 +174,10 @@ public enum TrayViewModelBuilder {
             hostStatuses: hosts.map { TrayHostStatus(hostId: $0.hostId, label: resolveHostName($0), status: $0.status) },
             truncatedHosts: live.filter(\.workspacesTruncated).map(resolveHostName),
             agentIndexTruncatedHosts: live.filter(\.agentsTruncated).map(resolveHostName),
-            configError: configError
+            configError: configError,
+            // Left out of `icon` and `count` on purpose: whether an unknown
+            // state needs attention is exactly what this build cannot know.
+            unknownStates: unknownStates
         )
     }
 
