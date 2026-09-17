@@ -90,10 +90,26 @@ public enum MenuModel {
         return parts.joined(separator: ", ")
     }
 
+    /// What separates the parts of a workspace row.
+    static let partSeparator = "  ·  "
+
+    /// The workspace's own half of the row: its name and its project. The host
+    /// is not in here — see `rowHostSuffix`.
     public static func rowLabel(_ row: TrayWorkspaceRow) -> String {
-        var parts = [row.label, row.projectName]
-        if let hostLabel = row.hostLabel { parts.append(hostLabel) }
-        return parts.joined(separator: "  ·  ")
+        [row.label, row.projectName].joined(separator: partSeparator)
+    }
+
+    /// The host's half, separator included, or nil when only one host is
+    /// configured and the rows do not name it at all.
+    ///
+    /// Separate from `rowLabel` because the panel draws it smaller and quieter:
+    /// on a row about a workspace, the machine it is on is the least of the
+    /// three things being said. It carries its own separator so that the
+    /// punctuation is quiet along with it, and so the composition stays here
+    /// rather than becoming a decision the view makes.
+    public static func rowHostSuffix(_ row: TrayWorkspaceRow) -> String? {
+        guard let hostLabel = row.hostLabel else { return nil }
+        return partSeparator + hostLabel
     }
 
     /// The whole menu, in order. Every action lives here: a menu bar item that

@@ -70,13 +70,13 @@ struct MenuContent: View {
             }
 
         case .workspace(let row, let label):
-            MenuActionRow { coordinator.openWorkspace(row); dismiss() } label: {
-                Text(label).font(MenuMetrics.font)
+            MenuActionRow { coordinator.openWorkspace(row); dismiss() } label: { hovering in
+                Self.workspaceText(label: label, host: MenuModel.rowHostSuffix(row), hovering: hovering)
             }
 
         case .overflow(_, let label):
             // The capped rows are only reachable in the app.
-            MenuActionRow { coordinator.openApp(); dismiss() } label: {
+            MenuActionRow { coordinator.openApp(); dismiss() } label: { _ in
                 Text(label).font(MenuMetrics.font)
             }
 
@@ -90,14 +90,14 @@ struct MenuContent: View {
 
         case .configError(let detail):
             // The fix for every one of these is in the Paseo app.
-            MenuActionRow { coordinator.showConfigError(detail); dismiss() } label: {
+            MenuActionRow { coordinator.showConfigError(detail); dismiss() } label: { _ in
                 Text("Configuration error").font(MenuMetrics.font)
             }
 
         case .hostsSummary(let label, let expanded):
             // The one row that changes the menu instead of leaving it: no
             // `dismiss()`, because the result is the rows it just revealed.
-            MenuActionRow(action: toggleHosts) {
+            MenuActionRow(action: toggleHosts) { _ in
                 HStack(spacing: MenuMetrics.iconSpacing) {
                     Image(systemName: expanded ? "chevron.down" : "chevron.right")
                         .font(.system(size: 10, weight: .semibold))
@@ -112,7 +112,7 @@ struct MenuContent: View {
 
         case .hostStatus(let hostId, let label, let retryable):
             if retryable {
-                MenuActionRow { coordinator.retryHost(hostId); dismiss() } label: {
+                MenuActionRow { coordinator.retryHost(hostId); dismiss() } label: { _ in
                     Text(label).font(MenuMetrics.font).padding(.leading, MenuMetrics.hostIndent)
                 }
             } else {
@@ -123,7 +123,7 @@ struct MenuContent: View {
             }
 
         case .openApp:
-            MenuActionRow { coordinator.openApp(); dismiss() } label: {
+            MenuActionRow { coordinator.openApp(); dismiss() } label: { _ in
                 Text("Open Paseo").font(MenuMetrics.font)
             }
 
@@ -142,11 +142,25 @@ struct MenuContent: View {
             }
 
         case .quit:
-            MenuActionRow { coordinator.quit() } label: {
+            MenuActionRow { coordinator.quit() } label: { _ in
                 Text("Quit Paseo Icon").font(MenuMetrics.font)
             }
             .keyboardShortcut("q", modifiers: .command)
         }
+    }
+
+    /// A workspace row: the workspace and its project at full strength, then
+    /// the host that it is on, smaller and quieter. One `Text` rather than an
+    /// `HStack` of two, so the row wraps as one sentence and reads to VoiceOver
+    /// as one string.
+    private static func workspaceText(label: String, host: String?, hovering: Bool) -> Text {
+        let workspace = Text(label).font(MenuMetrics.font)
+        guard let host else { return workspace }
+        // The highlight paints the row white. A secondary grey run on top of
+        // the accent colour reads as unreadable rather than as quiet, so under
+        // the pointer the host stays the row's own colour, just weaker.
+        let quiet: AnyShapeStyle = hovering ? AnyShapeStyle(Color.white.opacity(0.75)) : AnyShapeStyle(.secondary)
+        return workspace + Text(host).font(MenuMetrics.hostFont).foregroundStyle(quiet)
     }
 
     @ViewBuilder
@@ -181,6 +195,8 @@ enum MenuMetrics {
     static let cornerRadius: CGFloat = 5
 
     static let font = Font(NSFont.menuFont(ofSize: 0))
+    /// Two points under the menu font, for the host a workspace row ends with.
+    static let hostFont = Font(NSFont.menuFont(ofSize: NSFont.menuFont(ofSize: 0).pointSize - 2))
     static let boldFont = Font(NSFont.boldSystemFont(ofSize: NSFont.menuFont(ofSize: 0).pointSize))
 }
 
@@ -243,12 +259,15 @@ struct PanelResizer: NSViewRepresentable {
 /// pointer, which is what a menu row gave for free and a panel does not.
 private struct MenuActionRow<Label: View>: View {
     let action: () -> Void
-    @ViewBuilder let label: () -> Label
+    /// Handed the pointer state, because a run of text that is deliberately
+    /// quiet has to be quiet against the highlight too, and only this view
+    /// knows whether the pointer is here.
+    @ViewBuilder let label: (Bool) -> Label
     @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
-            label()
+            label(hovering)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, MenuMetrics.rowInset)
                 .padding(.vertical, MenuMetrics.rowSpacing)

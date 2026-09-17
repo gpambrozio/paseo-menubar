@@ -112,14 +112,27 @@ struct MenuModelTests {
         if case .separator = items[1] { Issue.record("separator after the heading") }
     }
 
-    @Test("renders a workspace row with its project and host")
+    @Test("renders a workspace row with its project, and without its host")
     func rowLabel() {
         let items = build(model(sections: [TrayMenuSection(bucket: .needsInput, rows: [row(hostLabel: "laptop")], overflow: 0)]))
         let labels = items.compactMap { item -> String? in
             if case .workspace(_, let label) = item { return label }
             return nil
         }
-        #expect(labels == ["fix-login  ·  paseo  ·  laptop"])
+        // The host is not in the label: it is its own run, so the panel can
+        // draw it smaller and quieter than the workspace it belongs to.
+        #expect(labels == ["fix-login  ·  paseo"])
+    }
+
+    @Test("hands the host over as its own part, with its separator attached")
+    func rowHostSuffix() {
+        let withHost = row(hostLabel: "laptop")
+        #expect(MenuModel.rowHostSuffix(withHost) == "  ·  laptop")
+        #expect(MenuModel.rowLabel(withHost) == "fix-login  ·  paseo")
+        // One host configured, so no row names it and there is no punctuation
+        // left dangling at the end of the label either.
+        #expect(MenuModel.rowHostSuffix(row()) == nil)
+        #expect(MenuModel.rowLabel(row()) == "fix-login  ·  paseo")
     }
 
     @Test("carries the row itself so a click has its ids")
