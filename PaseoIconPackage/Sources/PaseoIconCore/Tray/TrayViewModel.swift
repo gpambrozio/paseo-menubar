@@ -69,6 +69,14 @@ public struct TrayViewModel: Equatable, Sendable {
     /// they belong in; that decision lives in the daemon.
     public let unknownStates: [String: Int]
 
+    /// True when at least one workspace sits in a bucket that needs the user:
+    /// the same three buckets `count` is drawn from. The menu bar item draws
+    /// itself red on this, so the rule lives here rather than in the label,
+    /// where no test could reach it. `icon` is the first non-empty bucket in
+    /// section order and the three counted buckets lead that order, so this
+    /// says the same thing `count > 0` does, in the icon's own terms.
+    public var needsAttention: Bool { TrayViewModelBuilder.countedBuckets.contains(icon) }
+
     init(
         icon: TrayIconState,
         count: Int,

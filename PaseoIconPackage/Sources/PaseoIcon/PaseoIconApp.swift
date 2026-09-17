@@ -16,7 +16,11 @@ struct PaseoIconApp: App {
                 coordinator: coordinator
             )
         } label: {
-            MenuBarLabel(icon: coordinator.model.icon, count: coordinator.model.count)
+            MenuBarLabel(
+                icon: coordinator.model.icon,
+                count: coordinator.model.count,
+                needsAttention: coordinator.model.needsAttention
+            )
                 .task {
                     // The delegate is created by AppKit and cannot reach the
                     // scene's state on its own; this is the one place both

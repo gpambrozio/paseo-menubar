@@ -64,6 +64,32 @@ struct TrayViewModelTests {
         #expect(model.icon == .failed)
     }
 
+    @Test("asks for a red icon exactly when a workspace needs the user")
+    func needsAttention() {
+        // The three counted buckets each raise it on their own, and the two
+        // resting ones never do — a workspace that is merely working is not a
+        // reason to paint the menu bar red.
+        for status in ["needs_input", "failed", "attention"] {
+            let model = build([Fixture.host([Fixture.workspace("w1", status: status)])])
+            #expect(model.needsAttention, "\(status) should need attention")
+        }
+        for status in ["running", "done"] {
+            let model = build([Fixture.host([Fixture.workspace("w1", status: status)])])
+            #expect(!model.needsAttention, "\(status) should not need attention")
+        }
+        #expect(!build([Fixture.host()]).needsAttention)
+        #expect(!TrayViewModel.empty.needsAttention)
+    }
+
+    @Test("does not ask for a red icon for a bucket this build does not know, or a host it cannot vouch for")
+    func needsAttentionExclusions() {
+        // The two cases where workspaces exist but the icon must stay calm:
+        // an unknown state is exactly the thing this build cannot judge, and a
+        // disconnected host's rows are data nothing can vouch for.
+        #expect(!build([Fixture.host([Fixture.workspace("w1", status: "brand_new_bucket")])]).needsAttention)
+        #expect(!build([Fixture.host([Fixture.workspace("w1", status: "needs_input")], status: .disconnected)]).needsAttention)
+    }
+
     @Test("orders sections the way the Paseo sidebar does")
     func sectionOrder() {
         // All five buckets, supplied in an order matching none of them, so
