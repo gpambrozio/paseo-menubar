@@ -205,6 +205,19 @@ struct MenuModelTests {
         #expect(Set(items.map(\.id)).count == items.count)
     }
 
+    @Test("caps the unknown-state rows and says how many states it left out")
+    func unknownStateRowsCapped() {
+        // Sixteen distinct states this build cannot place. The menu shows the
+        // same fifteen a section would and names the remainder, rather than
+        // growing a row per state without limit.
+        var states: [String: Int] = [:]
+        for index in 0..<16 { states[String(format: "state%02d", index)] = 1 }
+        let rows = notes(build(model(unknownStates: states)))
+        #expect(rows.count == 16)
+        #expect(rows.first == "1 workspace in a state this version cannot show · state00")
+        #expect(rows.last == "…and 1 more state this version cannot show")
+    }
+
     @Test("does not claim there are no workspaces when the only ones are unknown")
     func unknownStatesAreNotNoWorkspaces() {
         // The rows exist; this build just cannot place them. Saying "No

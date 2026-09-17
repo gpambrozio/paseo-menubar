@@ -96,9 +96,16 @@ public enum MenuModel {
         // A bucket this build does not know, named rather than dropped. Sorted
         // only so the menu is stable between rebuilds: the order carries no
         // ranking, because ranking these is what this build cannot do.
-        for status in model.unknownStates.keys.sorted() {
-            let count = model.unknownStates[status] ?? 0
+        // Capped like a section, and the remainder named rather than dropped: a
+        // daemon whose vocabulary this build wholly fails to recognise could
+        // otherwise put one row here for every workspace it sent.
+        let unknown = model.unknownStates.sorted { $0.key < $1.key }
+        for (status, count) in unknown.prefix(TrayViewModelBuilder.sectionRowCap) {
             note("\(count) workspace\(count == 1 ? "" : "s") in a state this version cannot show · \(status)")
+        }
+        if unknown.count > TrayViewModelBuilder.sectionRowCap {
+            let left = unknown.count - TrayViewModelBuilder.sectionRowCap
+            note("…and \(left) more state\(left == 1 ? "" : "s") this version cannot show")
         }
 
         // The seed page has a ceiling. Reaching it means these rows are a

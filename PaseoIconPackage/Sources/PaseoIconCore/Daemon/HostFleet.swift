@@ -48,8 +48,10 @@ public final class HostFleet {
         let fingerprint = hostsFingerprint(config.hosts)
         if fingerprint == appliedFingerprint { return }
         // Recorded only once the fleet is actually built. Claiming it up front
-        // meant a rebuild that died partway still looked applied.
-        appliedFingerprint = ""
+        // meant a rebuild that died partway still looked applied. `nil` rather
+        // than empty for the same reason the declaration is optional: `""` is a
+        // value `hostsFingerprint` can return.
+        appliedFingerprint = nil
 
         closeAll()
         appliedHosts.removeAll()
