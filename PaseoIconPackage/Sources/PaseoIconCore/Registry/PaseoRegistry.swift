@@ -134,8 +134,13 @@ public enum PaseoRegistry {
                 // of defence it reads as.
                 do {
                     _ = try offer.validated()
-                } catch let error as ConnectionOfferError {
-                    failures.append("\(name) — \(error.message)")
+                } catch {
+                    // A bare catch, not `as ConnectionOfferError`: the day
+                    // `validated()` throws something else, a typed catch lets it
+                    // escape `hostEntries` and fail the whole read — back to zero
+                    // hosts, which is the one outcome this isolation exists to
+                    // prevent. Structural beats total-by-inspection here.
+                    failures.append("\(name) — \(errorText(error))")
                     continue
                 }
                 hosts.append(.relay(id: profile.serverId, label: label, offer: offer))

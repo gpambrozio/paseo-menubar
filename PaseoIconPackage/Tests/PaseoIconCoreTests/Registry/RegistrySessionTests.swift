@@ -31,6 +31,11 @@ struct RegistrySessionTests {
         var script: [Read]
         /// Set to answer every later read with this snapshot, ignoring the script.
         var current: RegistrySnapshot?
+        /// Set to suspend a read until `releaseRead()` is called, so a test can
+        /// hold one open across `stop()` — the shape the real detached read has,
+        /// where cancelling the awaiter does not stop the work.
+        var gate: CheckedContinuation<Void, Never>?
+        var gateRead = false
         /// Built after the stored properties so the callbacks can capture self.
         private(set) var session: RegistrySession!
 
@@ -39,6 +44,10 @@ struct RegistrySessionTests {
             session = RegistrySession(
                 readRegistry: { [weak self] in
                     guard let self else { return nil }
+                    if self.gateRead {
+                        self.gateRead = false
+                        await withCheckedContinuation { self.gate = $0 }
+                    }
                     return try self.nextRead()
                 },
                 watch: { [weak self] onChange in
@@ -246,7 +255,7 @@ struct RegistrySessionTests {
         #expect(h.afterReads == 2)
     }
 
-    @Test("stop cancels the pending read, the poll, and the watcher")
+    @Test("stop cancels the debounced read, the poll, and the watcher")
     func stopCancels() async {
         let h = Harness([.snapshot(RegistrySnapshot(hosts: [Self.host("a")], failures: []))], pollInterval: .milliseconds(100))
         await h.session.start()
@@ -259,6 +268,31 @@ struct RegistrySessionTests {
 
         #expect(h.unwatched)
         #expect(h.reads == 1)
+    }
+
+    @Test("a read already in flight when stop lands does not apply its result")
+    func stopAbandonsAnInFlightRead() async {
+        // The one the previous fix missed. `chain?.cancel()` alone changed
+        // nothing: cancellation is cooperative, and production's read is a
+        // detached task whose work the awaiter's cancellation does not touch —
+        // so the read completed and `applyConfig` rebuilt every connection that
+        // `closeAll()` had just closed. Here the read is held open across
+        // `stop()` to reproduce that ordering.
+        let h = Harness([.snapshot(RegistrySnapshot(hosts: [Self.host("a")], failures: []))])
+        h.gateRead = true
+        let started = Task { await h.session.start() }
+        await settle()
+        #expect(h.applied.isEmpty)
+
+        h.session.stop()
+        h.gate?.resume()
+        h.gate = nil
+        await started.value
+        await settle()
+
+        // The read finished, but nothing was applied to a fleet being torn down.
+        #expect(h.reads == 1)
+        #expect(h.applied.isEmpty)
     }
 
     @Test("debounces a burst of watcher events into one read")

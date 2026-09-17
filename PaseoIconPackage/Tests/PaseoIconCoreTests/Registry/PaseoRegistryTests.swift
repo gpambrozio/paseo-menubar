@@ -91,7 +91,12 @@ struct PaseoRegistryTests {
             ]))
             #expect(snapshot.hosts.map(\.id) == ["srv_one"], "key \(badKey.isEmpty ? "<empty>" : badKey) cost the healthy host")
             #expect(snapshot.failures.count == 1)
-            #expect(try #require(snapshot.failures.first).contains("Half-paired relay"))
+            let failure = try #require(snapshot.failures.first)
+            #expect(failure.contains("Half-paired relay"))
+            // A sentence, not a raw enum dump: these two both catch the offer
+            // error untyped now, so `errorText` is what renders it.
+            #expect(failure.contains("daemonPublicKeyB64"))
+            #expect(!failure.contains("ConnectionOfferError"))
         }
     }
 

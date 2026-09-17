@@ -292,7 +292,10 @@ enum InboundParser {
         // The callers all narrow to a dictionary first, so this is the belt to
         // that braces: `data(withJSONObject:)` raises an uncatchable
         // Objective-C exception for a top-level value that is not an array or
-        // an object, and this is the only line in the file that can do that.
+        // an object. The other call, in the `_response` branch, is safe by
+        // construction — its argument is the `[String: Any]` the frame was
+        // already narrowed to — so this is the only place the raising API can
+        // be reached with a value this module has not checked.
         guard JSONSerialization.isValidJSONObject(object) else {
             throw InboundParseError.malformed("\(type) payload is not a JSON object")
         }

@@ -39,7 +39,7 @@ written before its code, and review changed both of them afterwards.
 
 The rule that shapes this codebase: **if it does not touch AppKit or SwiftUI, it does not
 belong in the app target.** Everything else is pure or takes its collaborators by
-injection, and is tested without a menu bar. That is why 322 tests can cover a menu bar
+injection, and is tested without a menu bar. That is why 336 tests can cover a menu bar
 app that no agent can see.
 
 | Path under `PaseoIconPackage/Sources/` | Owns |
@@ -136,8 +136,8 @@ layer, where nothing could test it. If you find yourself adding a decision to
 ```bash
 SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm install   # Homebrew libvips breaks sharp's prebuild
 npm test                                    # vitest (scripts) then swift test
-swift test --package-path PaseoIconPackage  # 322 Swift tests, 32 suites
-npx vitest run                              # 43 tests, 4 files — build tooling only
+swift test --package-path PaseoIconPackage  # 336 Swift tests, 32 suites
+npx vitest run                              # 46 tests, 4 files — build tooling only
 npm run typecheck
 npm run icons                               # tray glyphs and the app icon
 npm run fixtures:registry                   # LevelDB fixtures

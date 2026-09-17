@@ -97,8 +97,8 @@ public final class RegistrySession {
         // The read chain too. On quit `AppCoordinator.stop()` closes the fleet
         // while a read may still be awaiting its detached LevelDB work; when it
         // resumed it called `applyConfig` and rebuilt every connection during
-        // teardown. The process is going away either way, but shutdown should
-        // mean what it says.
+        // teardown. This cancel is only half of that: `readOnce` has to check
+        // `Task.isCancelled` for it to mean anything, and it does.
         chain?.cancel()
         chain = nil
         stopWatching?()
@@ -140,6 +140,14 @@ public final class RegistrySession {
             refreshConfigError()
             return
         }
+
+        // Cancellation is cooperative and nothing else in this file observes it.
+        // Production's `readRegistry` is a detached task, which the awaiter's
+        // cancellation does not touch at all: the read completes, the await
+        // returns normally, and without this the rest of the method runs during
+        // teardown — rebuilding every connection `closeAll()` has just closed.
+        // `stop()`'s cancel only means something because this line reads it.
+        guard !Task.isCancelled else { return }
 
         let hosts = snapshot?.hosts ?? []
         let failures = snapshot?.failures ?? []

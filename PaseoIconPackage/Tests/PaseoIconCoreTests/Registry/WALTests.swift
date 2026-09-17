@@ -32,9 +32,9 @@ enum LogBuilder {
     /// `baseSequence` is a parameter because the header's high words come
     /// straight off disk and nothing signs this file, so they are reachable
     /// input rather than an internal detail.
-    static func batch(_ records: [[UInt8]], baseSequence: UInt64 = 1) -> [UInt8] {
+    static func batch(_ records: [[UInt8]], baseSequence: UInt64 = 1, declaredCount: UInt32? = nil) -> [UInt8] {
         var header: [UInt8] = (0..<8).map { UInt8((baseSequence >> (8 * $0)) & 0xff) }
-        let count = UInt32(records.count)
+        let count = declaredCount ?? UInt32(records.count)
         header += [UInt8(count & 0xff), UInt8((count >> 8) & 0xff), UInt8((count >> 16) & 0xff), UInt8(count >> 24)]
         return header + records.flatMap { $0 }
     }
@@ -204,6 +204,22 @@ struct WALTests {
         let truncated = LogBuilder.physical(LogBuilder.typeFull, LogBuilder.batch([[1]], baseSequence: 9))
         let scan = try WAL.find(in: good + truncated, userKey: myKey)
         #expect(scan.records.map { String(decoding: $0.value, as: UTF8.self) } == ["kept"])
+        #expect(scan.droppedFragments == 1)
+    }
+
+    @Test("a batch that delivers fewer records than its header promised says so")
+    func shortBatchIsCounted() throws {
+        // The batch ends cleanly on a record boundary, so no length runs off the
+        // end and no varint fails — the loop simply runs out of bytes with
+        // records still owed. Every other early exit counts its loss; this one
+        // used to report a clean read, so the tray showed a host list with no
+        // hint that a record was missing.
+        let batch = LogBuilder.batch(
+            [LogBuilder.writeRecord(key: myKey, value: Array("only-one".utf8))],
+            declaredCount: 2
+        )
+        let scan = try WAL.find(in: LogBuilder.physical(LogBuilder.typeFull, batch), userKey: myKey)
+        #expect(scan.records.map { String(decoding: $0.value, as: UTF8.self) } == ["only-one"])
         #expect(scan.droppedFragments == 1)
     }
 

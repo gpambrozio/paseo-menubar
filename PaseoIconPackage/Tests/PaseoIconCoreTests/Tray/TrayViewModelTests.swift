@@ -418,4 +418,21 @@ struct TrayViewModelClickTargetTests {
         ]))
         #expect(target?.agentId == "live")
     }
+    @Test("two rows whose ids differ only in where the separator falls stay distinct")
+    func rowIdentityIsNotAmbiguous() {
+        // Both ids come verbatim out of another app's storage. With a `/`
+        // separator these two were the same row, and SwiftUI's ForEach keys on
+        // this — so one workspace would silently not render. No fixture built
+        // this shape, so the slash version passed every identity test.
+        let left = TrayWorkspaceRow(
+            hostId: "a/b", serverId: nil, workspaceId: "c", agentId: nil,
+            label: "l", projectName: "p", hostLabel: nil
+        )
+        let right = TrayWorkspaceRow(
+            hostId: "a", serverId: nil, workspaceId: "b/c", agentId: nil,
+            label: "l", projectName: "p", hostLabel: nil
+        )
+        #expect(left.id != right.id)
+    }
+
 }

@@ -3,12 +3,20 @@ import Foundation
 /// What one `.log` yielded, and how much of it had to be thrown away.
 public struct LogScan: Equatable, Sendable {
     public let records: [InternalRecord]
-    /// Fragments discarded because their checksum failed, their type was not
-    /// one of FULL/FIRST/MIDDLE/LAST, or their declared length ran past the
-    /// block that holds them. Counted, rather than merely dropped, because a
-    /// dropped fragment can be the newest write of the key we came for. A
-    /// fragment abandoned at the end of the file is not counted: a log being
-    /// appended to routinely ends mid-batch.
+    /// What the log could not be trusted to yield. Physical fragments discarded
+    /// because their checksum failed, their type was not one of
+    /// FULL/FIRST/MIDDLE/LAST, or their declared length ran past the block that
+    /// holds them — and batch-level refusals too: a base sequence past 56 bits,
+    /// a varint or a length that runs off the end of its batch, an unknown
+    /// record type, or a batch that delivered fewer records than its header
+    /// promised. Counted rather than merely dropped, because any of them can be
+    /// the newest write of the key we came for. A fragment abandoned at the end
+    /// of the file is not counted: a log being appended to routinely ends
+    /// mid-batch.
+    ///
+    /// `LevelDBReader` renders this as "Discarded N corrupt record fragment(s)",
+    /// which is a fair summary of all of the above even though not every one is
+    /// a fragment.
     public let droppedFragments: Int
 }
 
@@ -187,6 +195,13 @@ public enum WAL {
             ))
             index += 1
         }
+        // The header promised `count` records and the batch ran out first. The
+        // other five early exits each count their loss; without this one a batch
+        // that simply stops short reports a clean read. Guarded on `dropped`
+        // because those exits leave the count short too, and the same loss
+        // counted twice inflates a number the user reads as how much the log
+        // lost.
+        if index < count, dropped == 0 { dropped += 1 }
         return (records, dropped)
     }
 }

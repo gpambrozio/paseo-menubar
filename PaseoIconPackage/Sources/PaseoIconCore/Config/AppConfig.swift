@@ -23,8 +23,11 @@ public struct AppConfig: Equatable, Sendable {
             if case .relay(_, _, let offer) = entry {
                 do {
                     _ = try offer.validated()
-                } catch let error as ConnectionOfferError {
-                    issues.append("Host \(entry.id): \(error.message)")
+                } catch {
+                    // Bare, for the same reason as the registry's copy: a typed
+                    // catch would let a future error escape as an untyped throw
+                    // rather than a named issue.
+                    issues.append("Host \(entry.id): \(errorText(error))")
                 }
             }
         }

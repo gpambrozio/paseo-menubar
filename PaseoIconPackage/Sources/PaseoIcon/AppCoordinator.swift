@@ -85,7 +85,10 @@ final class AppCoordinator {
                 serverId: row.serverId,
                 workspaceId: row.workspaceId,
                 agentId: row.agentId,
-                webBaseUrl: fleet.webBaseUrl(for: row.hostId)
+                webBaseUrl: fleet.webBaseUrl(for: row.hostId),
+                // A connected host's URL, not this one's: without a serverId
+                // this host has not handshaked, so its own origin cannot load.
+                fallbackWebBaseUrl: fleet.firstWebBaseUrl()
             ),
             desktopAppInstalled: OpenPaseo.defaultDesktopAppInstalled()
         ))

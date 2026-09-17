@@ -17,11 +17,17 @@ public struct TrayWorkspaceRow: Equatable, Sendable, Identifiable {
     /// Nil when only one host is configured.
     public let hostLabel: String?
 
-    // A NUL separator rather than a slash. `hostId` is the daemon's `serverId`,
-    // copied verbatim out of another app's storage and never character-checked,
-    // so a slash in it would make ("a/b", "c") and ("a", "b/c") the same row —
-    // and a row-identity collision is the silent cap this project has already
-    // fixed twice. NUL cannot appear in either component.
+    // A NUL separator rather than a slash. `hostId` is the daemon's `serverId`
+    // and `workspaceId` is its own id, both copied verbatim out of another
+    // app's storage and never character-checked, so a slash in either would
+    // make ("a/b", "c") and ("a", "b/c") the same row — and a row-identity
+    // collision is the silent cap this project has already fixed twice.
+    //
+    // This narrows the class rather than closing it: JSON can encode a NUL
+    // inside a string, so it is an assumption about Paseo's ids, not an
+    // invariant enforced here. Closing it entirely means a composite `Hashable`
+    // id, which `MenuItem` would have to adopt too — worth doing if a real id
+    // ever carries a separator, and not worth the churn before then.
     public var id: String { "\(hostId)\u{0}\(workspaceId)" }
 }
 

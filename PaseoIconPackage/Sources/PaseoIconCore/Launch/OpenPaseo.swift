@@ -27,14 +27,28 @@ public struct OpenWorkspaceTarget: Equatable, Sendable {
     public let workspaceId: String
     /// The workspace's most relevant agent, chosen by the view model, or nil.
     public let agentId: String?
-    /// Daemon HTTP base URL. Direct hosts have one; relay hosts do not.
+    /// This host's own daemon HTTP base URL, for the workspace and agent
+    /// routes. Direct hosts have one; relay hosts do not.
     public let webBaseUrl: String?
+    /// A *connected* host's base URL, for the case where there is no link to
+    /// build and the fallback is Paseo itself. Deliberately not `webBaseUrl`:
+    /// a nil `serverId` means this host never completed a handshake, so its own
+    /// origin cannot load, and using it would suppress `paseo://` in favour of a
+    /// browser tab that fails. `HostFleet.firstWebBaseUrl()` is what supplies it.
+    public let fallbackWebBaseUrl: String?
 
-    public init(serverId: String?, workspaceId: String, agentId: String?, webBaseUrl: String? = nil) {
+    public init(
+        serverId: String?,
+        workspaceId: String,
+        agentId: String?,
+        webBaseUrl: String? = nil,
+        fallbackWebBaseUrl: String? = nil
+    ) {
         self.serverId = serverId
         self.workspaceId = workspaceId
         self.agentId = agentId
         self.webBaseUrl = webBaseUrl
+        self.fallbackWebBaseUrl = fallbackWebBaseUrl
     }
 }
 
@@ -89,7 +103,7 @@ public enum OpenPaseo {
         // No `server_info` yet, so there is nothing to build either link out of.
         // Opening Paseo itself beats swallowing the click.
         guard let serverId = target.serverId else {
-            return app(webBaseUrl: target.webBaseUrl, desktopAppInstalled: desktopAppInstalled)
+            return app(webBaseUrl: target.fallbackWebBaseUrl, desktopAppInstalled: desktopAppInstalled)
         }
 
         if let agentId = target.agentId {

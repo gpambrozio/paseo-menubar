@@ -18,6 +18,12 @@ public final class URLSessionWebSocketTransport: DaemonTransport {
     /// The tail of the send chain, so frames keep their order.
     private var sendTail: Task<Void, Never> = Task {}
     private var closed = false
+    /// Which socket the callbacks belong to. A cancelled receive loop and an
+    /// invalidated session's delegate both keep running for a moment after
+    /// `connect()` has replaced them, and both end in code that closes "the"
+    /// socket. Without a generation to check, the predecessor tears down its
+    /// successor. Incremented on every `connect()`.
+    private var generation = 0
 
     public init(request: TransportRequest) {
         self.request = request
@@ -35,6 +41,11 @@ public final class URLSessionWebSocketTransport: DaemonTransport {
         task?.cancel(with: .goingAway, reason: nil)
         session?.invalidateAndCancel()
         closed = false
+        generation += 1
+        // A fresh chain, not the cancelled predecessor: the first send after a
+        // reconnect would otherwise await a cancelled task, and the old chain's
+        // cancellation would surface through the new transport's `onError`.
+        sendTail = Task {}
 
         var urlRequest = URLRequest(url: request.url)
         for (name, value) in request.headers {
@@ -43,12 +54,13 @@ public final class URLSessionWebSocketTransport: DaemonTransport {
         if !request.subprotocols.isEmpty {
             urlRequest.setValue(request.subprotocols.joined(separator: ", "), forHTTPHeaderField: "Sec-WebSocket-Protocol")
         }
+        let generation = self.generation
         let delegate = Delegate(
             onOpen: { [weak self] in
-                Task { @MainActor in self?.onOpen?() }
+                Task { @MainActor in self?.deliverOpen(generation: generation) }
             },
             onClose: { [weak self] code, reason in
-                Task { @MainActor in self?.finish(code: code, reason: reason) }
+                Task { @MainActor in self?.finish(code: code, reason: reason, generation: generation) }
             }
         )
         let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
@@ -118,7 +130,12 @@ public final class URLSessionWebSocketTransport: DaemonTransport {
     /// dropped connection or a failed handshake carries neither and reports
     /// as 1006 with the error text.
     private func handleReceiveFailure(_ error: any Error, task: URLSessionWebSocketTask) {
-        guard !closed else { return }
+        // `task === self.task` is the whole point: a receive loop cancelled by
+        // `connect()` still throws and still lands here, and by then `closed`
+        // has been reset, so the guard below passes and the predecessor closes
+        // the socket its successor just opened — reporting a close the owner
+        // never caused.
+        guard !closed, task === self.task else { return }
         onError?(error.localizedDescription)
         let closeCode = task.closeCode
         if closeCode == .invalid {
@@ -129,7 +146,16 @@ public final class URLSessionWebSocketTransport: DaemonTransport {
         }
     }
 
-    private func finish(code: Int, reason: String) {
+    private func deliverOpen(generation: Int) {
+        guard generation == self.generation else { return }
+        onOpen?()
+    }
+
+    private func finish(code: Int, reason: String, generation: Int? = nil) {
+        // An invalidated session's delegate is retained by that session and has
+        // no notion of which socket it belongs to, so a late `didCloseWith`
+        // from the previous generation must not close the current one.
+        if let generation, generation != self.generation { return }
         guard !closed else { return }
         closed = true
         receiveTask?.cancel()

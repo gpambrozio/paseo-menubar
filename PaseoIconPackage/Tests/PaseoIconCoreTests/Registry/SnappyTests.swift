@@ -66,10 +66,14 @@ struct SnappyTests {
         #expect(throws: SnappyError.truncated) {
             _ = try Snappy.uncompress([0xff, 0xff, 0xff, 0xff, 0x7f][...])
         }
-        // A modest overstatement still reaches the length check at the end,
-        // which is the error that names what actually happened.
-        #expect(throws: SnappyError.self) {
-            _ = try Snappy.uncompress([0x40, 0x00][...])
+        // A complete literal that is simply shorter than the declared length:
+        // this one does reach the final length check, which is the error that
+        // names what actually happened. `[0x40, 0x00]` did not — its literal tag
+        // ran off the end first and threw `.truncated`, so asserting
+        // `SnappyError.self` could not tell the two apart and passed either way.
+        // Declares 4 bytes, then a 1-byte literal tag carrying "ab".
+        #expect(throws: SnappyError.lengthMismatch(expected: 4, actual: 2)) {
+            _ = try Snappy.uncompress([0x04, 0x04, 0x61, 0x62][...])
         }
     }
 

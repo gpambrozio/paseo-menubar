@@ -119,10 +119,20 @@ struct OpenPaseoTests {
         let noWeb = OpenWorkspaceTarget(serverId: nil, workspaceId: "w1", agentId: "a1", webBaseUrl: nil)
         #expect(url(OpenPaseo.workspace(noWeb, desktopAppInstalled: true)) == "paseo://")
 
-        // With a web origin known, the browser is the better answer than a
-        // scheme that would open Paseo at whatever it last showed.
-        let withWeb = OpenWorkspaceTarget(serverId: nil, workspaceId: "w1", agentId: "a1", webBaseUrl: "http://127.0.0.1:6767/")
-        #expect(url(OpenPaseo.workspace(withWeb, desktopAppInstalled: false)) == "http://127.0.0.1:6767")
+        // The fallback uses a *connected* host's origin, never this host's: no
+        // serverId means no handshake, so its own origin cannot load, and
+        // preferring it would suppress `paseo://` for a browser tab that fails.
+        let ownUrlOnly = OpenWorkspaceTarget(
+            serverId: nil, workspaceId: "w1", agentId: "a1",
+            webBaseUrl: "http://10.0.0.9:6767/", fallbackWebBaseUrl: nil
+        )
+        #expect(url(OpenPaseo.workspace(ownUrlOnly, desktopAppInstalled: false)) == "paseo://")
+
+        let withFallback = OpenWorkspaceTarget(
+            serverId: nil, workspaceId: "w1", agentId: "a1",
+            webBaseUrl: "http://10.0.0.9:6767/", fallbackWebBaseUrl: "http://127.0.0.1:6767/"
+        )
+        #expect(url(OpenPaseo.workspace(withFallback, desktopAppInstalled: false)) == "http://127.0.0.1:6767")
     }
 
 }

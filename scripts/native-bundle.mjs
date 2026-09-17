@@ -261,7 +261,20 @@ export async function makeArtifacts({ app, out, version }) {
 // is neither. Comparing them directly makes this whole block a silent no-op for
 // a clone reached through any symlinked path, or one whose path has a space --
 // the script runs, imports, does nothing, and exits 0.
-if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
+// `realpathSync` throws ENOENT for a path that does not exist, and
+// `node -e "..." some-arg` sets `process.argv[1]` to that positional -- often a
+// relative, non-existent string. Without this the module would die at
+// evaluation with a bare `ENOENT ... realpath 'v0.4.0'` and no hint that a
+// main-module guard caused it.
+const mainPath = (p) => {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+};
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === mainPath(process.argv[1])) {
   const args = new Map();
   for (let i = 2; i < process.argv.length; i++) {
     const flag = process.argv[i];

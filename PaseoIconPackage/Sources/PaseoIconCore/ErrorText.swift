@@ -24,3 +24,11 @@ extension SSTableError: MessageError {}
 extension LocalStorageError: MessageError {}
 extension BinaryError: MessageError {}
 extension SnappyError: MessageError {}
+// Now that the registry and the config both catch it untyped -- so a future
+// case cannot escape as a whole-read failure -- `errorText` is what renders it,
+// and without this conformance the user would read a raw enum dump.
+extension ConnectionOfferError: MessageError {}
+// Now that the registry and the config both catch it untyped -- so a future
+// case cannot escape as a whole-read failure -- `errorText` is what renders it,
+// and without this conformance the user would read a raw enum dump.
+

@@ -101,7 +101,20 @@ export function assertCaskMatchesBundle(caskSource, infoPlistXml) {
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
+// `realpathSync` throws ENOENT for a path that does not exist, and
+// `node -e "..." some-arg` sets `process.argv[1]` to that positional -- often a
+// relative, non-existent string. Without this the module would die at
+// evaluation with a bare `ENOENT ... realpath 'v0.4.0'` and no hint that a
+// main-module guard caused it.
+const mainPath = (p) => {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+};
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === mainPath(process.argv[1])) {
   const { readFile } = await import("node:fs/promises");
   const path = await import("node:path");
 
