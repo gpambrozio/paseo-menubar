@@ -118,7 +118,7 @@ describe("the packaging script is reachable the way the docs say", () => {
 });
 
 describe("the package manifest and the native bundle agree", () => {
-  // CLAUDE.md names four places the macOS floor lives, and every other check
+  // AGENTS.md names four places the macOS floor lives, and every other check
   // hangs off MIN_MACOS: this file compares it to the cask and the README, and
   // check-cask-macos.mjs compares the cask to the built Info.plist. Nothing
   // parsed the manifest, so raising `platforms` alone would leave the binary's

@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 Paseo Icon is a macOS menu-bar indicator for [Paseo](https://paseo.sh) workspaces. It
 shows whether any workspace needs you, across every configured host, and deep-links into
