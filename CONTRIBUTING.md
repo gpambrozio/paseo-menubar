@@ -29,7 +29,7 @@ There is no linter. Match the style of the code around you.
 `docs/superpowers/` holds seven documents and they are not equals. Three design
 documents bind — two for behaviour, one for the native build. The four plans are
 historical records with known defects, kept because they explain why things are
-shaped the way they are, not because they are correct. [CLAUDE.md](CLAUDE.md) has
+shaped the way they are, not because they are correct. [AGENTS.md](AGENTS.md) has
 the table.
 
 If a change disagrees with a design document, the document wins until it is
@@ -41,7 +41,7 @@ The rule that shapes this codebase: **if it does not touch AppKit or SwiftUI, it
 does not belong in the app target.** `PaseoIconCore` is the whole program and is
 tested without a menu bar; `PaseoIcon` is the `MenuBarExtra` shell around it and
 decides nothing. If you find yourself adding a decision to `AppCoordinator`, that
-is the signal to extract it into the core, where a test can reach it. CLAUDE.md
+is the signal to extract it into the core, where a test can reach it. AGENTS.md
 has the full module map.
 
 A few rules that are easy to violate without knowing:

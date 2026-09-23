@@ -5,7 +5,7 @@ name: homebrew-cask
 # that was just uploaded.
 #
 # workflow_dispatch is the primary path, not a fallback. Release artifacts here
-# are built and uploaded by hand (see the known issues in CLAUDE.md), so
+# are built and uploaded by hand (see the known issues in AGENTS.md), so
 # `release: published` can fire while the dmg is still uploading -- or before it
 # exists at all, if the release was created first and filled in after. Running
 # this by hand once the assets are actually up is the reliable order. The

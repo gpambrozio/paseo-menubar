@@ -103,4 +103,4 @@ macOS only. Windows and Linux are not built yet.
 `docs/superpowers/` holds the design documents this app was built from and the
 plans that followed them. The design documents bind; the plans are kept as a
 record of why things are shaped the way they are, not as instructions.
-[CLAUDE.md](CLAUDE.md) covers the conventions.
+[AGENTS.md](AGENTS.md) covers the conventions.

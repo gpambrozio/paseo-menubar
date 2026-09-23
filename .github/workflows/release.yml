@@ -67,4 +67,4 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       - if: env.HAVE_SIGNING_CREDENTIALS != 'true'
         run: |
-          echo "::notice title=Packaging skipped::No signing secrets on this repo, so the dmg was not built here. Release artifacts are built by hand with 'npm run dist -- --version <x.y.z> --identity \"Developer ID Application: ...\"' and uploaded with 'gh release upload'. See the known issues in CLAUDE.md."
+          echo "::notice title=Packaging skipped::No signing secrets on this repo, so the dmg was not built here. Release artifacts are built by hand with 'npm run dist -- --version <x.y.z> --identity \"Developer ID Application: ...\"' and uploaded with 'gh release upload'. See the known issues in AGENTS.md."
