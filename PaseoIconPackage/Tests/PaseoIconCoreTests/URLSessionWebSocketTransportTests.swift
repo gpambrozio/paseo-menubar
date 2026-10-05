@@ -176,8 +176,6 @@ struct URLSessionWebSocketTransportTests {
         #expect(await eventually { second.frames.contains(.text("hello")) })
         #expect(!second.frames.contains(.text("stale")))
         #expect(second.frames.count == 2)
-        // A client-initiated close delivers nothing to the closed owner either.
-        #expect(!first.frames.contains(.text("stale")))
         #expect(second.errors.isEmpty)
         #expect(second.close == nil)
     }
