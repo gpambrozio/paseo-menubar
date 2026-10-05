@@ -135,4 +135,89 @@ struct URLSessionWebSocketTransportTests {
         #expect(second.close == nil)
     }
 
+    @Test("a frame the old socket received is not delivered after close and reconnect")
+    func staleFrameDoesNotReachTheNextConnection() async throws {
+        // The receive loop resumes on the main actor. A frame that lands while
+        // the main actor is busy has already completed its `receive()`, so
+        // cancelling the loop cannot take it back: the loop wakes after
+        // `close()` and `connect()` have run and hands the frame to whatever
+        // `onFrame` is by then — the next connection's. On CI that was the
+        // first socket's handshake report, arriving as the second's.
+        let harness = try await NodeHarness(script: "swift-test-ws-echo.mjs")
+        defer { harness.stop() }
+        let port = try harness.int("port")
+        let transport = URLSessionWebSocketTransport(request: TransportRequest(url: URL(string: "ws://127.0.0.1:\(port)/")!))
+        let first = Recorder()
+        transport.onOpen = { first.opened = true }
+        transport.onFrame = { first.frames.append($0) }
+        transport.onClose = { first.close = $0 }
+        transport.onError = { first.errors.append($0) }
+        transport.connect()
+        #expect(await eventually { first.opened && first.frames.count == 1 })
+
+        // Ask for a frame 300 ms from now; the echo of "armed" says the
+        // request was read. Then hold the main actor past the deadline, so the
+        // frame arrives on a receive the loop cannot act on yet.
+        transport.send(.text("later:300:stale"))
+        transport.send(.text("armed"))
+        #expect(await eventually { first.frames.contains(.text("armed")) })
+        holdMainActor(seconds: 1)
+
+        transport.close(code: 1000, reason: "done")
+        let second = Recorder()
+        transport.onOpen = { second.opened = true }
+        transport.onFrame = { second.frames.append($0) }
+        transport.onClose = { second.close = $0 }
+        transport.onError = { second.errors.append($0) }
+        transport.connect()
+
+        #expect(await eventually { second.opened && !second.frames.isEmpty })
+        transport.send(.text("hello"))
+        #expect(await eventually { second.frames.contains(.text("hello")) })
+        #expect(!second.frames.contains(.text("stale")))
+        #expect(second.frames.count == 2)
+        // A client-initiated close delivers nothing to the closed owner either.
+        #expect(!first.frames.contains(.text("stale")))
+        #expect(second.errors.isEmpty)
+        #expect(second.close == nil)
+    }
+
+    @Test("a send the old socket could not finish reports no error, to its owner or the next")
+    func staleSendErrorDoesNotReachTheNextConnection() async throws {
+        // The send chain runs on the main actor, so these sends have not
+        // started when `close()` cancels the socket under them. Each then fails
+        // with "cancelled", and used to report it through `onError` — which by
+        // then belonged to the next connection.
+        let harness = try await NodeHarness(script: "swift-test-ws-echo.mjs")
+        defer { harness.stop() }
+        let port = try harness.int("port")
+        let transport = URLSessionWebSocketTransport(request: TransportRequest(url: URL(string: "ws://127.0.0.1:\(port)/")!))
+        let first = Recorder()
+        transport.onOpen = { first.opened = true }
+        transport.onFrame = { first.frames.append($0) }
+        transport.onError = { first.errors.append($0) }
+        transport.connect()
+        #expect(await eventually { first.opened && first.frames.count == 1 })
+
+        for index in 0..<10 { transport.send(.text("doomed-\(index)")) }
+        transport.close(code: 1000, reason: "done")
+        let second = Recorder()
+        transport.onOpen = { second.opened = true }
+        transport.onFrame = { second.frames.append($0) }
+        transport.onClose = { second.close = $0 }
+        transport.onError = { second.errors.append($0) }
+        transport.connect()
+
+        #expect(await eventually { second.opened && !second.frames.isEmpty })
+        transport.send(.text("hello"))
+        #expect(await eventually { second.frames.contains(.text("hello")) })
+        #expect(second.errors.isEmpty)
+        #expect(first.errors.isEmpty)
+        #expect(second.close == nil)
+    }
+
+    /// Blocks rather than suspends: nothing else on the main actor runs meanwhile.
+    private func holdMainActor(seconds: TimeInterval) {
+        Thread.sleep(forTimeInterval: seconds)
+    }
 }

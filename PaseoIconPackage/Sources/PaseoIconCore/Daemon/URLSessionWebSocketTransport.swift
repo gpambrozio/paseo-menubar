@@ -94,7 +94,11 @@ public final class URLSessionWebSocketTransport: DaemonTransport {
             do {
                 try await task.send(message)
             } catch {
-                self?.onError?(error.localizedDescription)
+                // `close()` and `connect()` cancel the socket under any send
+                // still queued, and each then fails with "cancelled" — by which
+                // time `onError` may belong to the next connection.
+                guard let self, self.isCurrent(task) else { return }
+                self.onError?(error.localizedDescription)
             }
         }
     }
@@ -113,6 +117,12 @@ public final class URLSessionWebSocketTransport: DaemonTransport {
         while !Task.isCancelled {
             do {
                 let message = try await task.receive()
+                // The loop resumes on the main actor, so a frame that arrived
+                // while it was busy is handed over only after whatever kept it
+                // busy — possibly `close()` and the next `connect()`, which
+                // cancel the loop too late to take the frame back. Delivering
+                // it would hand the old socket's frame to the new connection.
+                guard isCurrent(task) else { return }
                 switch message {
                 case .string(let text): onFrame?(.text(text))
                 case .data(let data): onFrame?(.binary([UInt8](data)))
@@ -135,7 +145,7 @@ public final class URLSessionWebSocketTransport: DaemonTransport {
         // has been reset, so the guard below passes and the predecessor closes
         // the socket its successor just opened — reporting a close the owner
         // never caused.
-        guard !closed, task === self.task else { return }
+        guard isCurrent(task) else { return }
         onError?(error.localizedDescription)
         let closeCode = task.closeCode
         if closeCode == .invalid {
@@ -144,6 +154,12 @@ public final class URLSessionWebSocketTransport: DaemonTransport {
             let reason = task.closeReason.flatMap { String(data: $0, encoding: .utf8) } ?? ""
             finish(code: closeCode.rawValue, reason: reason)
         }
+    }
+
+    /// Whether callbacks from `task` still belong to the owner: it is the
+    /// socket `connect()` last opened, and nothing has closed it since.
+    private func isCurrent(_ task: URLSessionWebSocketTask) -> Bool {
+        !closed && task === self.task
     }
 
     private func deliverOpen(generation: Int) {

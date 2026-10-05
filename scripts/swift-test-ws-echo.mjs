@@ -2,7 +2,8 @@
 // with its port, sends each new client a report of the handshake it saw,
 // echoes every frame, and closes with 4401 "Incorrect password" when a client
 // sends the text "close-me" (the daemon's auth-rejection close, verbatim).
-// Exits when stdin closes.
+// "later:<ms>:<text>" sends <text> once <ms> have passed, so a test can have a
+// frame arrive while it holds the client busy. Exits when stdin closes.
 import { WebSocketServer } from "ws";
 
 const wss = new WebSocketServer({
@@ -26,6 +27,11 @@ wss.on("connection", (ws, request) => {
   ws.on("message", (data, isBinary) => {
     if (!isBinary && data.toString() === "close-me") {
       ws.close(4401, "Incorrect password");
+      return;
+    }
+    const later = isBinary ? null : /^later:(\d+):(.*)$/s.exec(data.toString());
+    if (later) {
+      setTimeout(() => ws.send(later[2]), Number(later[1]));
       return;
     }
     ws.send(data, { binary: isBinary });
