@@ -7,10 +7,17 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Entries describe what changed for someone running the app. Refactors, tests, and
 documentation are left to the git history.
 
-## [Unreleased]
+## [0.4.0] — 2026-10-05
 
 **This release requires macOS 14 (Sonoma) or later.** Earlier releases ran on
 macOS 13.
+
+### Added
+
+- The menu bar item turns red when a workspace needs you: one that is waiting
+  for input, has failed, or is ready to review. A workspace in a state this
+  version does not recognise, or on a host that is disconnected, never turns it
+  red, since there is no telling whether it needs you.
 
 ### Changed
 
@@ -19,6 +26,15 @@ macOS 13.
   labels and order, opens the same deep links, and installs through the same
   Homebrew cask, so there is nothing to reconfigure. It launches faster and uses
   a fraction of the memory.
+- **The menu is now a panel rather than a native menu.** Section headings are
+  now prominent, but the panel does not yet respond to the arrow keys,
+  type-to-select, or VoiceOver's menu navigation the way the menu did. ⌘Q still
+  quits.
+- The list of hosts collapses into a single row summing up how many are
+  connected, and expands to show each one. The host a workspace runs on is drawn
+  smaller and quieter than the workspace's own name.
+- Host names no longer end in `.local`, including the names the Paseo desktop
+  app gives hosts by default.
 - A workspace in a state this version does not recognise now gets its own row
   saying so. It used to disappear, which made a busy fleet look idle after a
   Paseo update added a state.
@@ -98,6 +114,7 @@ First release.
 - Signed and notarized builds of both the app and the disk image, so Gatekeeper
   opens them without a right-click detour. Apple Silicon only, macOS 12 or later.
 
+[0.4.0]: https://github.com/gpambrozio/paseo-menubar/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/gpambrozio/paseo-menubar/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/gpambrozio/paseo-menubar/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/gpambrozio/paseo-menubar/releases/tag/v0.1.0
