@@ -17,14 +17,14 @@
   },
   "devDependencies": {
     "@getpaseo/server": "0.4.0",
-    "@types/node": "^26.6.3",
+    "@types/node": "^26.6.4",
     "classic-level": "^3.0.0",
-    "lucide-static": "1.48.0",
-    "pino": "^10.3.1",
+    "lucide-static": "1.50.0",
+    "pino": "^10.4.0",
     "sharp": "^0.35.5",
     "tweetnacl": "^1.0.3",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.2",
+    "vitest": "^5.0.3",
     "ws": "^8.22.0"
   },
   "repository": {
