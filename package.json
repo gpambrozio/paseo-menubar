@@ -19,13 +19,13 @@
     "@getpaseo/server": "0.4.0",
     "@types/node": "^26.6.6",
     "classic-level": "^3.0.0",
-    "lucide-static": "1.66.0",
+    "lucide-static": "1.70.0",
     "pino": "^10.4.0",
     "sharp": "^0.35.5",
     "tweetnacl": "^1.0.3",
     "typescript": "^7.0.2",
     "vitest": "^5.1.0",
-    "ws": "^8.22.1"
+    "ws": "^8.22.2"
   },
   "repository": {
     "type": "git",
