@@ -188,6 +188,19 @@ public final class URLSessionWebSocketTransport: DaemonTransport {
             self.closeHandler = onClose
         }
 
+        func urlSession(
+            _ session: URLSession,
+            task: URLSessionTask,
+            willPerformHTTPRedirection response: HTTPURLResponse,
+            newRequest request: URLRequest,
+            completionHandler: @escaping @Sendable (URLRequest?) -> Void
+        ) {
+            // Authentication is scoped to the selected endpoint. In particular,
+            // a loopback redirect must never carry local hello credentials to
+            // a different socket. The registry owns endpoint changes.
+            completionHandler(nil)
+        }
+
         func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
             openHandler()
         }

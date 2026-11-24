@@ -28,6 +28,19 @@ struct ConnectionOfferTests {
         #expect(offer.serverId == "srv-1")
     }
 
+    @Test("parses protected offers and rejects any explicit mode other than protected")
+    func minimumSecurityMode() throws {
+        let prefix = Self.offerJSON.dropLast()
+        let protected = "\(prefix),\"minimumSecurityMode\":\"protected\"}"
+        #expect(try ConnectionOffer.parse(fromURL: "#offer=\(Self.base64URL(protected))").minimumSecurityMode == .protected)
+        for value in ["null", "true", #""legacy""#, #""future-mode""#] {
+            let json = "\(prefix),\"minimumSecurityMode\":\(value)}"
+            #expect(throws: ConnectionOfferError.unsupportedMinimumSecurityMode) {
+                try ConnectionOffer.parse(fromURL: "#offer=\(Self.base64URL(json))")
+            }
+        }
+    }
+
     @Test("rejects input without an offer fragment")
     func missingFragment() {
         #expect(throws: ConnectionOfferError.missingFragment) {

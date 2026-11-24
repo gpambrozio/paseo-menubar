@@ -13,6 +13,7 @@ struct PaseoIconApp: App {
     /// in one line, and the names behind it are the follow-up question. Scene
     /// state, so the answer survives the panel closing.
     @State private var hostsExpanded = false
+    @State private var doneExpanded = false
 
     var body: some Scene {
         MenuBarExtra {
@@ -20,11 +21,14 @@ struct PaseoIconApp: App {
                 items: MenuModel.build(
                     coordinator.model,
                     loginItemEnabled: coordinator.loginItemEnabled,
-                    hostsExpanded: hostsExpanded
+                    hostsExpanded: hostsExpanded,
+                    doneExpanded: doneExpanded
                 ),
                 coordinator: coordinator,
-                toggleHosts: { hostsExpanded.toggle() }
+                toggleHosts: { hostsExpanded.toggle() },
+                toggleDone: { doneExpanded.toggle() }
             )
+            .onAppear { coordinator.refreshMenu() }
         } label: {
             MenuBarLabel(
                 icon: coordinator.model.icon,

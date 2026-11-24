@@ -35,8 +35,8 @@ struct MenuModelTests {
         )
     }
 
-    private func build(_ model: TrayViewModel, loginItemEnabled: Bool = false, hostsExpanded: Bool = false) -> [MenuItem] {
-        MenuModel.build(model, loginItemEnabled: loginItemEnabled, hostsExpanded: hostsExpanded)
+    private func build(_ model: TrayViewModel, loginItemEnabled: Bool = false, hostsExpanded: Bool = false, doneExpanded: Bool = false) -> [MenuItem] {
+        MenuModel.build(model, loginItemEnabled: loginItemEnabled, hostsExpanded: hostsExpanded, doneExpanded: doneExpanded)
     }
 
     private func hostRows(_ items: [MenuItem]) -> [String] {
@@ -69,7 +69,8 @@ struct MenuModelTests {
             TrayMenuSection(bucket: .running, rows: [row(workspaceId: "w4")], overflow: 0),
             TrayMenuSection(bucket: .done, rows: [row(workspaceId: "w5")], overflow: 0),
         ]))
-        #expect(headings(items) == ["Needs input", "Failed", "Ready to review", "Working", "Done"])
+        #expect(headings(items) == ["Needs input", "Failed", "Ready to review", "Working"])
+        #expect(items.contains(.doneSummary(count: 1, expanded: false)))
     }
 
     @Test("gives each section heading its own bucket, so the icon layer cannot swap them")
@@ -82,7 +83,8 @@ struct MenuModelTests {
             if case .sectionHeading(let bucket, _) = item { return bucket }
             return nil
         }
-        #expect(buckets == [.needsInput, .done])
+        #expect(buckets == [.needsInput])
+        #expect(items.contains(.doneSummary(count: 1, expanded: false)))
     }
 
     @Test("rules between sections, but never above the first one")
@@ -91,13 +93,14 @@ struct MenuModelTests {
             TrayMenuSection(bucket: .needsInput, rows: [row()], overflow: 0),
             TrayMenuSection(bucket: .running, rows: [row(workspaceId: "w2")], overflow: 0),
             TrayMenuSection(bucket: .done, rows: [row(workspaceId: "w3")], overflow: 0),
-        ]))
+        ]), doneExpanded: true)
         // Shape down to the footer: heading, row, rule, heading, row, rule,
         // heading, row. A leading rule would show up in position 0.
         let shape = items.prefix(8).map { item -> String in
             switch item {
             case .separator: "---"
             case .sectionHeading(_, let label): label
+            case .doneSummary: "Done"
             case .workspace(_, let label): label
             default: "?"
             }
@@ -107,9 +110,26 @@ struct MenuModelTests {
 
     @Test("draws no rule when only one section has anything in it")
     func singleSection() {
-        let items = build(model(sections: [TrayMenuSection(bucket: .done, rows: [row()], overflow: 0)]))
+        let items = build(model(sections: [TrayMenuSection(bucket: .done, rows: [row()], overflow: 0)]), doneExpanded: true)
         if case .separator = items[0] { Issue.record("leading separator") }
         if case .separator = items[1] { Issue.record("separator after the heading") }
+    }
+
+    @Test("Done starts collapsed with the full eligible count and expands rows plus overflow")
+    func doneDisclosure() {
+        let input = model(sections: [
+            TrayMenuSection(bucket: .running, rows: [row(workspaceId: "active")], overflow: 0),
+            TrayMenuSection(bucket: .done, rows: [row(workspaceId: "completed")], overflow: 8),
+        ])
+        let collapsed = build(input)
+        #expect(collapsed.contains(.doneSummary(count: 9, expanded: false)))
+        #expect(collapsed.compactMap { if case .workspace(let row, _) = $0 { row.workspaceId } else { nil } } == ["active"])
+        #expect(!collapsed.contains { if case .overflow = $0 { true } else { false } })
+        let expanded = build(input, doneExpanded: true)
+        #expect(expanded.contains(.doneSummary(count: 9, expanded: true)))
+        #expect(expanded.compactMap { if case .workspace(let row, _) = $0 { row.workspaceId } else { nil } } == ["active", "completed"])
+        #expect(expanded.contains(.overflow(bucket: .done, label: "…and 8 more")))
+        #expect(Set(expanded.map(\.id)).count == expanded.count)
     }
 
     @Test("renders a workspace row with its project, and without its host")
@@ -156,19 +176,21 @@ struct MenuModelTests {
         #expect(overflow == ["…and 3 more"])
     }
 
-    @Test("offers a retry on an unauthorized host, whose session stopped reconnecting")
+    @Test("offers a retry on hosts whose authentication or protocol check stopped reconnecting")
     func retryRow() throws {
         let items = build(model(hostStatuses: [
             TrayHostStatus(hostId: "h1", label: "laptop", status: .connected),
             TrayHostStatus(hostId: "h2", label: "studio", status: .unauthorized),
+            TrayHostStatus(hostId: "h3", label: "remote", status: .incompatibleProtocol),
         ]), hostsExpanded: true)
         let hosts = items.compactMap { item -> (String, String, Bool)? in
             if case .hostStatus(let hostId, let label, let retryable) = item { return (hostId, label, retryable) }
             return nil
         }
-        #expect(hosts.count == 2)
+        #expect(hosts.count == 3)
         #expect(hosts[0] == ("h1", "laptop · connected", false))
         #expect(hosts[1] == ("h2", "studio · authentication failed — retry", true))
+        #expect(hosts[2] == ("h3", "remote · protocol update required — retry", true))
     }
 
     @Test("sums the hosts up in one row, in the same words the rows use")

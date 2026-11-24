@@ -9,6 +9,40 @@ to specify: the daemon wire contract, because a native app cannot use the
 TypeScript SDK. Where this document and the implementation plans disagree,
 this document wins.
 
+## 0.4.1 amendment
+
+This section takes precedence for the wire, registry, and menu changes it describes.
+
+- **Wire and authentication.** The daemon protocol stays at version 1.
+  Relay clients offer the 0.17.3 protected channel (Noise NK and authenticated
+  records) alongside legacy compatibility. A saved `minimumSecurityMode: "protected"`
+  or a previously authenticated protected handshake pins the daemon public key
+  to protected mode across reconnects and launches. Protected handshake or
+  record failures end the attempt without downgrading. Record failures retry
+  with a fresh handshake under the existing protected pin. Relay passwords come
+  from the host profile and travel in the protected daemon `hello`. A legacy
+  TCP route password is scoped to that TCP route.
+- **Local daemon credentials.** A matching live PID lock must identify the
+  profile's server ID, port, and a literal loopback listener. An eligible
+  `ws` route saved as `localhost` dials the lock's literal address. TLS
+  routes keep their configured hostname and use automatic credentials only
+  when it matches the literal lock address. The owner-only local credential
+  travels in `hello`. The session verifies the returned server ID before
+  seeding. Other direct connections retain bearer authentication when configured.
+- **Saved relay routes.** The preferred supported route leads. If it is a
+  relay, retryable disconnects advance through distinct usable relays saved
+  for the same server ID and decoded daemon key, in registry order, with
+  backoff between unsuccessful cycles. The strongest advertised minimum
+  applies across those same-key routes. Authentication, security, and
+  protocol rejections stop automatic failover.
+- **Done.** The section starts collapsed behind a count and expands inline.
+  Exclude rows whose later activity or status-entry timestamp is at least seven
+  days old, using creation time when both are missing and keeping rows without
+  usable dates. Sort the remaining rows across hosts before applying the cap,
+  newest activity first, with status-entry and creation timestamps as
+  fallbacks and unknown dates last. The workspace seed uses
+  `status_priority asc, activity_at desc`.
+
 ## Why
 
 The Electron `Tray` API is an image plus a title string. It cannot draw a
@@ -57,7 +91,7 @@ the Observation framework needs 14. This raises the floor from the Electron
 build's 13, and the cask's `depends_on macos` line changes with the first
 native release.
 
-### Behaviour is unchanged
+### Behaviour carried over from the original native release
 
 Same rows, same five state buckets, same labels, same click targets, same
 registry source, same error rows, same login item. `WorkspaceDescriptor.status`
@@ -133,7 +167,7 @@ Auth failure arrives as the close frame's reason, `Password required` or
 `unauthorized` and stops reconnecting; retrying a wrong password behind
 backoff forever is the failure mode to avoid.
 
-### Relay: end-to-end encryption
+### Relay: legacy end-to-end encryption
 
 The relay is a transport wrapper under the unchanged daemon protocol. The
 client dials `wss://<endpoint>/ws?serverId=<id>&role=client&v=2`; the hosted

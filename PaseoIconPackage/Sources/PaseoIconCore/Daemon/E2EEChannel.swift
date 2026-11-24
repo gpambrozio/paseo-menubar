@@ -1,38 +1,46 @@
 import Foundation
 
-/// The client side of `@getpaseo/relay` 0.4.0 `encrypted-channel.ts`, as a
-/// transport that wraps another transport.
-///
-/// Handshake: on the base socket opening, generate a fresh key pair, derive
-/// the shared key from the daemon public key in the offer, and send a
-/// plaintext `e2ee_hello` carrying our public key. Repeat it every second
-/// until `e2ee_ready` arrives (the relay accepts our socket before the daemon
-/// has attached, so the first hellos can go unanswered). The ready message
-/// carries no key: the daemon is authenticated by the offer, not the wire.
-///
-/// After that every frame is `E2EEBox` output. Text plaintext travels as
-/// base64 in a text frame; binary plaintext as a binary frame when the daemon
-/// advertised `binaryCiphertext`, else base64 too. Frames sent while still
-/// handshaking are queued (newest 200 kept) and flushed on open.
-///
-/// A plaintext JSON frame after the handshake that is not a stray hello or
-/// ready means the peer is not encrypting; that is fatal (close 1011) so the
-/// session reconnects and re-handshakes rather than parsing someone else's
-/// traffic.
-/// A channel may be connected again after its base closed: `connect()` resets every per-socket field, so the next socket gets a fresh key pair and a fresh close.
+/// Paseo's client secure channel. It offers Noise and legacy with separate
+/// ephemeral keys, then retries the same hello until the daemon attaches.
+/// Each WebSocket connection starts with fresh handshake and record state.
 @MainActor
 public final class E2EEChannel: DaemonTransport {
     public static let handshakeRetryInterval: Duration = .seconds(1)
     public static let maxPendingSends = 200
     public static let fatalCloseCode = 1011
+    private static let protectedHandshakeFailedCloseCode = 4002
+    private static let protectedRecordFailedCloseCode = 4003
 
     private enum State { case idle, handshaking, open, closed }
 
-    private struct HandshakeMessage: Decodable {
-        struct Capabilities: Decodable { var binaryCiphertext: Bool? }
-        var type: String
-        var key: String?
-        var capabilities: Capabilities?
+    private struct HandshakeType: Decodable { let type: String }
+
+    private struct ProtectedEnvelope: Codable {
+        static let version = 1
+        let v: Int
+        let message: String
+    }
+
+    private struct ReadyMessage: Decodable {
+        private enum CodingKeys: String, CodingKey { case capabilities, protected }
+        private enum CapabilityKeys: String, CodingKey { case binaryCiphertext }
+        let binaryCiphertext: Bool
+        let protectedEnvelope: ProtectedEnvelope?
+
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            if container.contains(.capabilities) {
+                let capabilities = try container.nestedContainer(keyedBy: CapabilityKeys.self, forKey: .capabilities)
+                binaryCiphertext = capabilities.contains(.binaryCiphertext)
+                    ? try capabilities.decode(Bool.self, forKey: .binaryCiphertext)
+                    : false
+            } else {
+                binaryCiphertext = false
+            }
+            protectedEnvelope = container.contains(.protected)
+                ? try container.decode(ProtectedEnvelope.self, forKey: .protected)
+                : nil
+        }
     }
 
     private struct HelloMessage: Encodable {
@@ -40,31 +48,44 @@ public final class E2EEChannel: DaemonTransport {
         let type = "e2ee_hello"
         let key: String
         let capabilities = Capabilities()
+        let protected: ProtectedEnvelope
     }
 
     public var onOpen: (() -> Void)?
     public var onFrame: ((TransportFrame) -> Void)?
     public var onClose: ((TransportClose) -> Void)?
     public var onError: ((String) -> Void)?
+    public private(set) var securityMode: RelaySecurityMode?
+    private(set) var securityFailureReason: String?
+    private(set) var localCloseReason: String?
 
     private let base: any DaemonTransport
     private let daemonPublicKey: [UInt8]
     private let clock: any Clock<Duration>
+    private var minimumMode: RelaySecurityMode
     private var state: State = .idle
     private var sharedKey: E2EESharedKey?
+    private var noise: NoiseNKInitiator?
+    private var protectedCodec: ProtectedRecordCodec?
     private var helloText = ""
     private var binaryCiphertext = false
     private var pendingSends: [TransportFrame] = []
     private var retryTask: Task<Void, Never>?
     private var closeForwarded = false
 
-    public init(base: any DaemonTransport, daemonPublicKeyB64: String, clock: any Clock<Duration>) throws {
+    public init(
+        base: any DaemonTransport,
+        daemonPublicKeyB64: String,
+        clock: any Clock<Duration>,
+        minimumMode: RelaySecurityMode = .legacy
+    ) throws {
         self.base = base
         self.daemonPublicKey = try E2EEBox.importPublicKey(base64: daemonPublicKeyB64)
         self.clock = clock
+        self.minimumMode = minimumMode
     }
 
-    /// True once `e2ee_ready` has been received. Exposed for the probe CLI and tests.
+    /// True once `e2ee_ready` has passed negotiation.
     public var isOpen: Bool { state == .open }
 
     public func connect() {
@@ -74,6 +95,11 @@ public final class E2EEChannel: DaemonTransport {
         pendingSends = []
         binaryCiphertext = false
         sharedKey = nil
+        noise = nil
+        protectedCodec = nil
+        securityMode = nil
+        securityFailureReason = nil
+        localCloseReason = nil
         helloText = ""
         base.onOpen = { [weak self] in self?.handleBaseOpen() }
         base.onFrame = { [weak self] frame in self?.handleBaseFrame(frame) }
@@ -89,6 +115,14 @@ public final class E2EEChannel: DaemonTransport {
             if pendingSends.count >= Self.maxPendingSends { pendingSends.removeFirst() }
             pendingSends.append(frame)
         case .open:
+            if let protectedCodec {
+                do {
+                    base.send(try protectedCodec.seal(frame))
+                } catch {
+                    failProtectedRecord("Protected relay record encryption failed")
+                }
+                return
+            }
             guard let sharedKey else { return }
             let plaintext: [UInt8]
             let isBinary: Bool
@@ -118,9 +152,7 @@ public final class E2EEChannel: DaemonTransport {
     }
 
     public func close(code: Int, reason: String) {
-        retryTask?.cancel()
-        retryTask = nil
-        state = .closed
+        clearConnection()
         base.close(code: code, reason: reason)
     }
 
@@ -128,22 +160,21 @@ public final class E2EEChannel: DaemonTransport {
 
     private func handleBaseOpen() {
         guard state == .idle else { return }
-        let pair: E2EEKeyPair
         do {
-            pair = try E2EEBox.generateKeyPair()
+            let pair = try E2EEBox.generateKeyPair()
             sharedKey = try E2EEBox.deriveSharedKey(ourSecretKey: pair.secretKey, peerPublicKey: daemonPublicKey)
+            let noise = try NoiseNKInitiator(remoteStatic: daemonPublicKey)
+            self.noise = noise
+            let hello = HelloMessage(
+                key: E2EEBox.exportPublicKey(pair.publicKey),
+                protected: .init(v: ProtectedEnvelope.version, message: Data(noise.helloMessage).base64EncodedString())
+            )
+            helloText = String(decoding: try JSONEncoder().encode(hello), as: UTF8.self)
         } catch {
-            fail("E2EE key derivation failed: \(error)")
+            failProtectedHandshake("Could not start protected relay handshake")
             return
         }
-        let hello = HelloMessage(key: E2EEBox.exportPublicKey(pair.publicKey))
-        guard let data = try? JSONEncoder().encode(hello) else {
-            fail("Could not encode e2ee_hello")
-            return
-        }
-        helloText = String(decoding: data, as: UTF8.self)
         state = .handshaking
-        base.send(.text(helloText))
         retryTask = Task { [weak self] in
             while true {
                 guard let self, self.state == .handshaking else { return }
@@ -156,22 +187,14 @@ public final class E2EEChannel: DaemonTransport {
                 self.base.send(.text(self.helloText))
             }
         }
+        base.send(.text(helloText))
     }
 
     private func handleBaseFrame(_ frame: TransportFrame) {
         switch state {
         case .handshaking:
-            guard case .text(let text) = frame,
-                  let message = Self.parseHandshake(text),
-                  message.type == "e2ee_ready" else { return }
-            binaryCiphertext = message.capabilities?.binaryCiphertext == true
-            state = .open
-            retryTask?.cancel()
-            retryTask = nil
-            onOpen?()
-            let pending = pendingSends
-            pendingSends = []
-            for item in pending { send(item) }
+            guard case .text(let text) = frame, Self.handshakeType(text) == "e2ee_ready" else { return }
+            handleReady(text)
         case .open:
             handleOpenFrame(frame)
         case .idle, .closed:
@@ -179,7 +202,65 @@ public final class E2EEChannel: DaemonTransport {
         }
     }
 
+    private func handleReady(_ text: String) {
+        guard let ready = try? JSONDecoder().decode(ReadyMessage.self, from: Data(text.utf8)) else {
+            failProtectedHandshake("Malformed relay handshake response")
+            return
+        }
+        if let envelope = ready.protectedEnvelope {
+            guard envelope.v == ProtectedEnvelope.version else {
+                failProtectedHandshake("Unsupported protected relay handshake version")
+                return
+            }
+            let encoded = envelope.message.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let response = ConnectionOffer.decodeBase64URL(encoded), !response.isEmpty, let noise else {
+                failProtectedHandshake("Malformed protected relay handshake response")
+                return
+            }
+            do {
+                protectedCodec = try noise.complete(Array(response))
+            } catch {
+                failProtectedHandshake("Could not authenticate protected relay handshake")
+                return
+            }
+            sharedKey = nil
+            minimumMode = .protected
+            securityMode = .protected
+        } else {
+            guard minimumMode != .protected else {
+                failProtectedHandshake("Daemon offered only legacy endpoint security")
+                return
+            }
+            binaryCiphertext = ready.binaryCiphertext
+            securityMode = .legacy
+        }
+        noise = nil
+        helloText = ""
+        retryTask?.cancel()
+        retryTask = nil
+        state = .open
+        onOpen?()
+        let pending = pendingSends
+        pendingSends = []
+        for item in pending where state == .open { send(item) }
+    }
+
     private func handleOpenFrame(_ frame: TransportFrame) {
+        // Retries can leave duplicate hello/ready frames in flight at open.
+        if case .text(let text) = frame,
+           text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{"),
+           let type = Self.handshakeType(text),
+           type == "e2ee_hello" || type == "e2ee_ready" {
+            return
+        }
+        if let protectedCodec {
+            do {
+                onFrame?(try protectedCodec.open(frame))
+            } catch {
+                failProtectedRecord("Invalid protected relay record")
+            }
+            return
+        }
         guard let sharedKey else { return }
         let cipher: [UInt8]
         let wasBinary: Bool
@@ -187,10 +268,6 @@ public final class E2EEChannel: DaemonTransport {
         case .text(let text):
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.hasPrefix("{") {
-                if let message = Self.parseHandshake(trimmed),
-                   message.type == "e2ee_hello" || message.type == "e2ee_ready" {
-                    return
-                }
                 fail("Received plaintext frame on encrypted channel")
                 return
             }
@@ -223,29 +300,47 @@ public final class E2EEChannel: DaemonTransport {
     }
 
     private func handleBaseClose(_ close: TransportClose) {
-        retryTask?.cancel()
-        retryTask = nil
-        state = .closed
+        clearConnection()
         guard !closeForwarded else { return }
         closeForwarded = true
         onClose?(close)
     }
 
-    /// A fatal frame is reported to the owner as a 1011 close: emit the error, close the
-    /// base transport, then forward that close through `handleBaseClose` immediately.
-    /// `URLSessionWebSocketTransport` never calls `onClose` for a close it initiated
-    /// itself, so without this the owner would not learn of the disconnect until the
-    /// next liveness timeout.
-    private func fail(_ message: String) {
-        onError?(message)
+    private func clearConnection() {
         retryTask?.cancel()
         retryTask = nil
         state = .closed
-        base.close(code: Self.fatalCloseCode, reason: message)
-        handleBaseClose(TransportClose(code: Self.fatalCloseCode, reason: message))
+        sharedKey = nil
+        noise = nil
+        protectedCodec = nil
+        helloText = ""
+        pendingSends = []
     }
 
-    private static func parseHandshake(_ text: String) -> HandshakeMessage? {
-        try? JSONDecoder().decode(HandshakeMessage.self, from: Data(text.utf8))
+    /// Forward local channel failures immediately.
+    /// `URLSessionWebSocketTransport` never calls `onClose` for a close it initiated
+    /// itself, so without this the owner would not learn of the disconnect until the
+    /// next liveness timeout.
+    private func fail(_ message: String, code: Int = E2EEChannel.fatalCloseCode) {
+        localCloseReason = message
+        clearConnection()
+        onError?(message)
+        base.close(code: code, reason: message)
+        handleBaseClose(TransportClose(code: code, reason: message))
+    }
+
+    private func failProtectedHandshake(_ message: String) {
+        securityFailureReason = message
+        fail(message, code: Self.protectedHandshakeFailedCloseCode)
+    }
+
+    private func failProtectedRecord(_ message: String) {
+        // Discard desynchronized record state, then reconnect with a fresh
+        // handshake. The authenticated daemon key remains pinned to protected.
+        fail(message, code: Self.protectedRecordFailedCloseCode)
+    }
+
+    private static func handshakeType(_ text: String) -> String? {
+        try? JSONDecoder().decode(HandshakeType.self, from: Data(text.utf8)).type
     }
 }

@@ -9,11 +9,13 @@ import Foundation
 /// point for two applies to interleave through and no serialization to do.
 @MainActor
 public final class HostFleet {
-    public typealias MakeConnection = (HostEntry, HostStore) throws -> any HostConnecting
+    public typealias MakeConnection = (HostEntry, any HostSink) throws -> any HostConnecting
 
     private let store: HostStore
     private let onEntryFailures: ([String]) -> Void
     private let makeConnection: MakeConnection
+    private let clock: any Clock<Duration>
+    private var fallbackHosts: [String: [HostEntry]] = [:]
 
     private var connections: [String: any HostConnecting] = [:]
     /// The entries behind the live connections, in config order. A menu row
@@ -32,12 +34,15 @@ public final class HostFleet {
     public init(
         store: HostStore,
         onEntryFailures: @escaping ([String]) -> Void,
-        makeConnection: MakeConnection? = nil
+        makeConnection: MakeConnection? = nil,
+        clock: any Clock<Duration> = ContinuousClock()
     ) {
         self.store = store
         self.onEntryFailures = onEntryFailures
+        self.clock = clock
+        let relayPins = RelaySecurityPinStore()
         self.makeConnection = makeConnection ?? { entry, store in
-            try HostConnection(entry: entry, sink: store, clock: ContinuousClock())
+            try HostConnection(entry: entry, sink: store, clock: clock, relaySecurityPins: relayPins)
         }
     }
 
@@ -45,7 +50,7 @@ public final class HostFleet {
     /// unchanged: Chromium rewrites the registry's database for keys the tray
     /// does not care about, and churning sockets over that is pure cost.
     public func apply(_ config: AppConfig) {
-        let fingerprint = hostsFingerprint(config.hosts)
+        let fingerprint = config.fingerprint
         if fingerprint == appliedFingerprint { return }
         // Recorded only once the fleet is actually built. Claiming it up front
         // meant a rebuild that died partway still looked applied. `nil` rather
@@ -56,6 +61,7 @@ public final class HostFleet {
         closeAll()
         appliedHosts.removeAll()
         entryFailures.removeAll()
+        fallbackHosts = config.fallbackHosts
 
         for entry in config.hosts {
             appliedHosts.append((entry.id, entry))
@@ -136,7 +142,15 @@ public final class HostFleet {
             if connections[entry.id] != nil {
                 throw FleetError.duplicateId(entry.id)
             }
-            connections[entry.id] = try makeConnection(entry, store)
+            let alternatives = fallbackHosts[entry.id] ?? []
+            if alternatives.isEmpty {
+                connections[entry.id] = try makeConnection(entry, store)
+            } else {
+                connections[entry.id] = try RouteFailoverConnection(
+                    entries: [entry] + alternatives, sink: store, clock: clock,
+                    makeConnection: makeConnection
+                )
+            }
             entryFailures.removeAll { $0.id == entry.id }
         } catch {
             let hint = entry.endpointHint

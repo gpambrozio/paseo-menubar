@@ -119,6 +119,28 @@ struct RegistrySessionTests {
         #expect(h.applied.last?.hosts.map(\.id) == ["a", "b"])
     }
 
+    @Test("applies a change to a fallback route without requiring a primary change")
+    func changedFallbackRoute() async {
+        func relay(_ endpoint: String) -> HostEntry {
+            .relay(id: "a", label: "a", offer: ConnectionOffer(
+                serverId: "a",
+                daemonPublicKeyB64: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+                relay: .init(endpoint: endpoint)
+            ))
+        }
+        let primary = relay("primary.test:443")
+        let old = relay("old.test:443")
+        let replacement = relay("replacement.test:24443")
+        let h = Harness([
+            .snapshot(RegistrySnapshot(hosts: [primary], failures: [], fallbackHosts: ["a": [old]])),
+            .snapshot(RegistrySnapshot(hosts: [primary], failures: [], fallbackHosts: ["a": [replacement]])),
+        ])
+        await h.session.start()
+        await h.session.refresh()
+        await h.session.refresh()
+        #expect(h.applied.map(\.fallbackHosts) == [["a": [old]], ["a": [replacement]]])
+    }
+
     @Test("keeps the last known-good hosts when a later read fails")
     func readFailure() async throws {
         let h = Harness([

@@ -1,4 +1,4 @@
-// Boots a real `@getpaseo/server` 0.4.0 daemon on an OS-assigned port for the
+// Boots a real `@getpaseo/server` 0.17.3 daemon on an OS-assigned port for the
 // Swift integration tests, in the shape the native app parity plan sets out.
 // Prints one JSON line when ready:
 //
@@ -7,16 +7,18 @@
 // and stops the daemon when stdin closes.
 //
 //   node scripts/swift-test-daemon.mjs [--password <password>]
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
 import pino from "pino";
 import { createPaseoDaemon } from "@getpaseo/server";
+import { hashDaemonPassword } from "@getpaseo/server/auth";
 
 const args = process.argv.slice(2);
 const passwordIndex = args.indexOf("--password");
 const password = passwordIndex === -1 ? undefined : args[passwordIndex + 1];
+const localCredentialFixture = args.includes("--local-credential");
 
 // The daemon logs a page of provider-reconciliation warnings on boot; they go
 // nowhere so the Swift test output stays readable.
@@ -41,7 +43,7 @@ const daemon = await createPaseoDaemon(
     relayEnabled: false,
     relayEndpoint: "relay.paseo.sh:443",
     appBaseUrl: "https://app.paseo.sh",
-    ...(password ? { auth: { password } } : {}),
+    ...(password ? { auth: { password: hashDaemonPassword(password) } } : {}),
   },
   logger,
 );
@@ -55,7 +57,15 @@ if (!target || target.type !== "tcp") throw new Error("expected a TCP listener")
 const serverId = (await readFile(path.join(paseoHome, "server-id"), "utf8")).trim();
 const { publicKeyB64 } = JSON.parse(await readFile(path.join(paseoHome, "daemon-keypair.json"), "utf8"));
 
-process.stdout.write(JSON.stringify({ port: target.port, serverId, daemonPublicKeyB64: publicKeyB64 }) + "\n");
+// The CLI normally writes its PID/listen metadata around the bootstrap. Model
+// that wrapper only in this isolated fixture; bootstrap itself writes the token.
+if (localCredentialFixture) {
+  await writeFile(path.join(paseoHome, "paseo.pid"), JSON.stringify({
+    pid: process.pid, serverId, listen: `127.0.0.1:${target.port}`,
+  }), { mode: 0o600 });
+}
+process.stdout.write(JSON.stringify({ port: target.port, serverId, daemonPublicKeyB64: publicKeyB64,
+  ...(localCredentialFixture ? { paseoHome } : {}) }) + "\n");
 
 async function stop() {
   await daemon.stop().catch(() => undefined);

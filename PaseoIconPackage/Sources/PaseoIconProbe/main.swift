@@ -7,7 +7,7 @@ import PaseoIconCore
 // This is how relay connectivity is checked against a real host without a
 // menu bar in the loop.
 //
-//   swift run PaseoIconProbe --offer 'paseo://…#offer=…'
+//   swift run PaseoIconProbe --offer 'paseo://…#offer=…' [--password <password>]
 //   swift run PaseoIconProbe --endpoint 127.0.0.1:6767 [--password secret] [--tls]
 
 @MainActor
@@ -44,7 +44,7 @@ final class PrintingSink: HostSink {
 
 func usage() -> Never {
     FileHandle.standardError.write(Data("""
-    usage: PaseoIconProbe --offer <pairing url>
+    usage: PaseoIconProbe --offer <pairing url> [--password <password>]
            PaseoIconProbe --endpoint <host:port> [--password <password>] [--tls]
 
     """.utf8))
@@ -75,7 +75,7 @@ func parseEntry(_ arguments: [String]) -> HostEntry {
     }
     if let offer {
         do {
-            return .relay(id: "probe", label: nil, offer: try ConnectionOffer.parse(fromURL: offer))
+            return .relay(id: "probe", label: nil, offer: try ConnectionOffer.parse(fromURL: offer), password: password)
         } catch {
             FileHandle.standardError.write(Data("invalid offer: \(error)\n".utf8))
             exit(2)

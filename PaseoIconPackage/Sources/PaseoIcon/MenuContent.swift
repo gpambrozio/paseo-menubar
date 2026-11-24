@@ -17,6 +17,7 @@ struct MenuContent: View {
     /// Shows or hides the per-host rows. The state lives in the scene, so it
     /// survives the panel closing; which rows exist is still `MenuModel`'s call.
     let toggleHosts: () -> Void
+    let toggleDone: () -> Void
 
     /// Closes the panel. Actions that take the user elsewhere call it, the way
     /// clicking a menu row used to close the menu. Opening Paseo also makes the
@@ -95,6 +96,19 @@ struct MenuContent: View {
                         .foregroundStyle(.primary)
                 }
             }
+
+        case .doneSummary(let count, let expanded):
+            MenuActionRow(action: toggleDone) { _ in
+                HStack(spacing: MenuMetrics.iconSpacing) {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .frame(width: 10, alignment: .center)
+                    glyph(.done)
+                    Text("Done · \(count)").font(MenuMetrics.boldFont)
+                }
+            }
+            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+            .accessibilityHint(expanded ? "Hides completed workspaces" : "Shows recent completed workspaces")
 
         case .workspace(let row, let label):
             MenuActionRow { coordinator.openWorkspace(row); dismiss() } label: { hovering in

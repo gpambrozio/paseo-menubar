@@ -212,6 +212,8 @@ free. On Windows and Linux it goes in the tooltip and the menu header.
 
 ## Menu
 
+See the [0.4.1 amendment](2026-09-16-native-swift-app-design.md#041-amendment) for the Done section.
+
 ```
 Needs input
   fix-login-redirect  ·  paseo  ·  laptop

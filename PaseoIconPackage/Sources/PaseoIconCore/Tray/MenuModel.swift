@@ -6,6 +6,7 @@ import Foundation
 public enum MenuItem: Equatable, Sendable, Identifiable {
     /// A disabled section heading carrying its bucket's icon.
     case sectionHeading(bucket: WorkspaceStateBucket, label: String)
+    case doneSummary(count: Int, expanded: Bool)
     case workspace(row: TrayWorkspaceRow, label: String)
     /// The capped rows are only reachable in the app, so this opens it. It
     /// carries its section's bucket rather than the count it dropped, because
@@ -32,6 +33,7 @@ public enum MenuItem: Equatable, Sendable, Identifiable {
     public var id: String {
         switch self {
         case .sectionHeading(let bucket, _): "heading:\(bucket.rawValue)"
+        case .doneSummary: "doneSummary"
         case .workspace(let row, _): "row:\(row.id)"
         case .overflow(let bucket, _): "overflow:\(bucket.rawValue)"
         case .separator(let index): "sep:\(index)"
@@ -52,13 +54,15 @@ public enum MenuModel {
         .connected: "connected",
         .disconnected: "disconnected",
         .unauthorized: "authentication failed",
+        .securityRejected: "security check failed",
+        .incompatibleProtocol: "protocol update required",
         .invalid: "invalid configuration",
     ]
 
     /// The order the summary counts statuses in: connected first, because that
     /// is the answer to the question the row is asked, then the states that
     /// need the user in the order they are worth knowing about.
-    static let summaryOrder: [HostStatus] = [.connected, .connecting, .disconnected, .unauthorized, .invalid]
+    static let summaryOrder: [HostStatus] = [.connected, .connecting, .disconnected, .unauthorized, .securityRejected, .incompatibleProtocol, .invalid]
 
     /// "3 hosts connected", or "2 hosts connected, 1 disconnected".
     ///
@@ -118,7 +122,7 @@ public enum MenuModel {
     /// `hostsExpanded` is the panel's own state, passed in for the same reason
     /// `loginItemEnabled` is: the menu is data, so the rows that exist are
     /// decided here and tested here, not hidden by the view that draws them.
-    public static func build(_ model: TrayViewModel, loginItemEnabled: Bool, hostsExpanded: Bool = false) -> [MenuItem] {
+    public static func build(_ model: TrayViewModel, loginItemEnabled: Bool, hostsExpanded: Bool = false, doneExpanded: Bool = false) -> [MenuItem] {
         var items: [MenuItem] = []
         var separators = 0
         var notes = 0
@@ -143,7 +147,12 @@ public enum MenuModel {
             // leading separator as a stray line under the menu's top edge.
             for (index, section) in model.sections.enumerated() {
                 if index > 0 { separator() }
-                items.append(.sectionHeading(bucket: section.bucket, label: TrayViewModelBuilder.sectionLabels[section.bucket] ?? section.bucket.rawValue))
+                if section.bucket == .done {
+                    items.append(.doneSummary(count: section.rows.count + section.overflow, expanded: doneExpanded))
+                    guard doneExpanded else { continue }
+                } else {
+                    items.append(.sectionHeading(bucket: section.bucket, label: TrayViewModelBuilder.sectionLabels[section.bucket] ?? section.bucket.rawValue))
+                }
                 items.append(contentsOf: section.rows.map { .workspace(row: $0, label: rowLabel($0)) })
                 if section.overflow > 0 {
                     items.append(.overflow(bucket: section.bucket, label: "…and \(section.overflow) more"))
@@ -185,7 +194,7 @@ public enum MenuModel {
                 // Auth rejection ends the reconnect loop for good, so without
                 // the retry the only way back after fixing the password is
                 // relaunching the app.
-                let retryable = host.status == .unauthorized
+                let retryable = host.status == .unauthorized || host.status == .securityRejected || host.status == .incompatibleProtocol
                 items.append(.hostStatus(hostId: host.hostId, label: retryable ? "\(text) — retry" : text, retryable: retryable))
             }
         }

@@ -5,6 +5,12 @@
 // "later:<ms>:<text>" sends <text> once <ms> have passed, so a test can have a
 // frame arrive while it holds the client busy. Exits when stdin closes.
 import { WebSocketServer } from "ws";
+import { createServer } from "node:http";
+
+const redirector = createServer();
+redirector.on("upgrade", (_request, socket) => {
+  socket.end(`HTTP/1.1 302 Found\r\nLocation: ws://127.0.0.1:${wss.address().port}/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`);
+});
 
 const wss = new WebSocketServer({
   host: "127.0.0.1",
@@ -15,7 +21,9 @@ const wss = new WebSocketServer({
 });
 
 wss.on("listening", () => {
-  process.stdout.write(JSON.stringify({ port: wss.address().port }) + "\n");
+  redirector.listen(0, "127.0.0.1", () => {
+    process.stdout.write(JSON.stringify({ port: wss.address().port, redirectPort: redirector.address().port }) + "\n");
+  });
 });
 
 wss.on("connection", (ws, request) => {
@@ -39,6 +47,7 @@ wss.on("connection", (ws, request) => {
 });
 
 process.stdin.on("end", () => {
+  redirector.close();
   wss.close();
   process.exit(0);
 });

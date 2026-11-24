@@ -3,14 +3,19 @@ import Foundation
 /// The hosts the Paseo desktop app has stored, as the tray can use them.
 public struct RegistrySnapshot: Equatable, Sendable {
     public var hosts: [HostEntry]
+    /// Additional relay routes in registry order, keyed by the primary host id.
+    public var fallbackHosts: [String: [HostEntry]]
     /// Hosts the tray cannot dial, phrased for the error row. Never silent.
     public var failures: [String]
     /// Set when the hosts above were read out of a database that was partly
     /// unreadable, so they may be superseded.
     public var warning: String?
 
-    public init(hosts: [HostEntry], failures: [String], warning: String? = nil) {
+    public init(
+        hosts: [HostEntry], failures: [String], warning: String? = nil, fallbackHosts: [String: [HostEntry]] = [:]
+    ) {
         self.hosts = hosts
+        self.fallbackHosts = fallbackHosts
         self.failures = failures
         self.warning = warning
     }
@@ -83,6 +88,7 @@ public enum PaseoRegistry {
         guard let candidates = parsed as? [Any] else { throw RegistryError.notAnArray }
 
         var hosts: [HostEntry] = []
+        var fallbackHosts: [String: [HostEntry]] = [:]
         var failures: [String] = []
         var seenServerIds = Set<String>()
 
@@ -96,7 +102,15 @@ public enum PaseoRegistry {
                 continue
             }
 
-            guard let connection = profile.chooseConnection() else {
+            let routes: [HostEntry]
+            do {
+                routes = try profile.hostRoutes()
+            } catch {
+                failures.append("\(name) — \(errorText(error))")
+                continue
+            }
+
+            guard let primary = routes.first else {
                 let kinds = profile.connections.map(\.type)
                 let has = kinds.isEmpty ? "" : " (has: \(kinds.joined(separator: ", ")))"
                 failures.append("\(name) — no connection the menu bar can use\(has)")
@@ -111,42 +125,12 @@ public enum PaseoRegistry {
             }
             seenServerIds.insert(profile.serverId)
 
-            // The id is the serverId, never the connection id: distinct hosts
-            // share the identical relay connection id. An empty label is left
-            // out rather than carried through.
-            let label = profile.label.flatMap { $0.isEmpty ? nil : $0 }
-            switch connection {
-            case .directTcp(let endpoint, let useTls, let password):
-                hosts.append(.directTcp(id: profile.serverId, label: label, endpoint: endpoint, useTls: useTls, password: password))
-            case .relay(let endpoint, let useTls, let daemonPublicKeyB64):
-                let offer = ConnectionOffer(
-                    serverId: profile.serverId,
-                    daemonPublicKeyB64: daemonPublicKeyB64,
-                    relay: .init(endpoint: endpoint, useTls: useTls)
-                )
-                // Validated here, per profile, rather than only in
-                // `AppConfig.validate`. That one throws for the whole list, and
-                // `RegistrySession.readOnce` catches it and returns before
-                // applying anything — so one relay profile whose pairing never
-                // finished cost every other host, including the local daemon.
-                // "Not to zero hosts" has to hold at this level too, and the
-                // guard in `AppConfig` then becomes the unreachable last line
-                // of defence it reads as.
-                do {
-                    _ = try offer.validated()
-                } catch {
-                    // A bare catch, not `as ConnectionOfferError`: the day
-                    // `validated()` throws something else, a typed catch lets it
-                    // escape `hostEntries` and fail the whole read — back to zero
-                    // hosts, which is the one outcome this isolation exists to
-                    // prevent. Structural beats total-by-inspection here.
-                    failures.append("\(name) — \(errorText(error))")
-                    continue
-                }
-                hosts.append(.relay(id: profile.serverId, label: label, offer: offer))
+            hosts.append(primary)
+            if routes.count > 1 {
+                fallbackHosts[primary.id] = Array(routes.dropFirst())
             }
         }
-        return RegistrySnapshot(hosts: hosts, failures: failures)
+        return RegistrySnapshot(hosts: hosts, failures: failures, fallbackHosts: fallbackHosts)
     }
 
     // MARK: - Profile parsing
@@ -157,7 +141,7 @@ public enum PaseoRegistry {
 
     private enum Dialable {
         case directTcp(endpoint: String, useTls: Bool, password: String?)
-        case relay(endpoint: String, useTls: Bool?, daemonPublicKeyB64: String)
+        case relay(endpoint: String, useTls: Bool?, daemonPublicKeyB64: String, minimumSecurityMode: RelaySecurityMode?)
     }
 
     private struct Connection {
@@ -172,6 +156,7 @@ public enum PaseoRegistry {
     private struct Profile {
         let serverId: String
         let label: String?
+        let password: String?
         let connections: [Connection]
         let preferredConnectionId: String?
 
@@ -190,6 +175,11 @@ public enum PaseoRegistry {
             var label: String?
             if let raw = object["label"] {
                 if let text = raw as? String { label = text } else if !(raw is NSNull) { issues.append("label: expected a string") }
+            }
+
+            var password: String?
+            if let raw = object["password"] {
+                if let text = raw as? String { password = text } else { issues.append("password: expected a string") }
             }
 
             var connections: [Connection] = []
@@ -214,7 +204,18 @@ public enum PaseoRegistry {
                         guard let key = entry["daemonPublicKeyB64"] as? String else { issues.append("\(prefix).daemonPublicKeyB64: required"); continue }
                         var useTls: Bool?
                         if let raw = entry["useTls"] { if let flag = PaseoRegistry.boolValue(raw) { useTls = flag } else { issues.append("\(prefix).useTls: expected a boolean"); continue } }
-                        connections.append(Connection(id: id, type: type, dialable: .relay(endpoint: endpoint, useTls: useTls, daemonPublicKeyB64: key)))
+                        var minimumSecurityMode: RelaySecurityMode?
+                        if let raw = entry["minimumSecurityMode"] {
+                            guard (raw as? String) == "protected" else {
+                                issues.append("\(prefix).minimumSecurityMode: expected protected")
+                                continue
+                            }
+                            minimumSecurityMode = .protected
+                        }
+                        connections.append(Connection(id: id, type: type, dialable: .relay(
+                            endpoint: endpoint, useTls: useTls, daemonPublicKeyB64: key,
+                            minimumSecurityMode: minimumSecurityMode
+                        )))
                     case "directSocket", "directPipe":
                         guard entry["path"] is String else { issues.append("\(prefix).path: required"); continue }
                         connections.append(Connection(id: id, type: type, dialable: nil))
@@ -235,16 +236,59 @@ public enum PaseoRegistry {
             guard issues.isEmpty else { throw ProfileError(issues: issues) }
             self.serverId = serverId
             self.label = label
+            self.password = password == "" ? nil : password
             self.connections = connections
             self.preferredConnectionId = preferred
         }
 
-        /// The profile's preference when the tray supports it, else the first
-        /// supported one.
-        func chooseConnection() -> Dialable? {
-            let supported = connections.filter { $0.dialable != nil }
-            if let preferred = supported.first(where: { $0.id != nil && $0.id == preferredConnectionId }) { return preferred.dialable }
-            return supported.first?.dialable
+        /// The desktop's preferred supported connection leads. Automatic
+        /// fallback stays within the same relay identity and wire server id.
+        func hostRoutes() throws -> [HostEntry] {
+            var supported = connections.filter { $0.dialable != nil }
+            if let preferred = supported.firstIndex(where: { $0.id != nil && $0.id == preferredConnectionId }) {
+                let connection = supported.remove(at: preferred)
+                supported.insert(connection, at: 0)
+            }
+
+            let label = self.label.flatMap { $0.isEmpty ? nil : $0 }
+            switch supported.first?.dialable {
+            case .directTcp(let endpoint, let useTls, let routePassword):
+                _ = try DaemonEndpoints.daemonWebSocketURL(endpoint: endpoint, useTls: useTls)
+                return [.directTcp(
+                    id: serverId, label: label, endpoint: endpoint, useTls: useTls,
+                    password: password ?? routePassword
+                )]
+            case .relay(let endpoint, let useTls, let key, let minimumMode):
+                let primary = try ConnectionOffer(
+                    serverId: serverId, daemonPublicKeyB64: key, relay: .init(endpoint: endpoint, useTls: useTls),
+                    minimumSecurityMode: minimumMode
+                ).validated()
+                let primaryURL = try primary.relayWebSocketURL()
+                let identity = try RelaySecurityPinStore.identity(publicKeyB64: key)
+                var offers = [primary]
+                var seen: Set<URL> = [primaryURL]
+                var requiresProtected = minimumMode == .protected
+                for route in supported.dropFirst() {
+                    guard case .relay(let endpoint, let useTls, let key, let minimumMode) = route.dialable,
+                          (try? RelaySecurityPinStore.identity(publicKeyB64: key)) == identity else { continue }
+                    // A duplicate or unusable endpoint can still advertise
+                    // the minimum for this daemon.
+                    requiresProtected = requiresProtected || minimumMode == .protected
+                    let offer = ConnectionOffer(
+                        serverId: serverId, daemonPublicKeyB64: key, relay: .init(endpoint: endpoint, useTls: useTls),
+                        minimumSecurityMode: minimumMode
+                    )
+                    guard let url = try? offer.relayWebSocketURL(), seen.insert(url).inserted else { continue }
+                    offers.append(offer)
+                }
+                return offers.map { offer in
+                    var offer = offer
+                    if requiresProtected { offer.minimumSecurityMode = .protected }
+                    return .relay(id: serverId, label: label, offer: offer, password: password)
+                }
+            case nil:
+                return []
+            }
         }
     }
 

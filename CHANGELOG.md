@@ -7,6 +7,22 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Entries describe what changed for someone running the app. Refactors, tests, and
 documentation are left to the git history.
 
+## [Unreleased] — 0.4.1 candidate
+
+### Added
+
+- Protected relay and desktop local-credential authentication for current Paseo daemons.
+- Automatic retry through saved alternate relays for the same daemon.
+
+### Changed
+
+- Done starts collapsed, shows the last seven days, and orders workspaces by latest interaction.
+
+### Fixed
+
+- Packaged tray images are found on Macs without the original build directory.
+- Protocol and security rejections expose a manual retry action.
+
 ## [0.4.0] — 2026-10-05
 
 **This release requires macOS 14 (Sonoma) or later.** Earlier releases ran on

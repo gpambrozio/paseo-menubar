@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// The host set the fleet is built from. Only the registry session builds
@@ -7,43 +8,87 @@ public struct AppConfig: Equatable, Sendable {
     public let version = 1
     public let hosts: [HostEntry]
 
-    /// Duplicate ids and empty offer fields are rejected with a message per
-    /// issue, the way the published schemas rejected them.
-    public static func validate(hosts: [HostEntry]) throws -> AppConfig {
+    public let fallbackHosts: [String: [HostEntry]]
+
+    public var fingerprint: String {
+        fingerprintDigest(ConfigFingerprintInput(
+            hosts: hosts.sorted { $0.id < $1.id },
+            fallbackHosts: fallbackHosts
+        ))
+    }
+
+    /// Duplicate ids and invalid offers are rejected with a message per issue.
+    public static func validate(
+        hosts: [HostEntry], fallbackHosts: [String: [HostEntry]] = [:]
+    ) throws -> AppConfig {
         var issues: [String] = []
-        var seen = Set<String>()
+        var primaries: [String: HostEntry] = [:]
         for entry in hosts {
-            if seen.contains(entry.id) {
+            if primaries[entry.id] != nil {
                 issues.append("Duplicate host id \"\(entry.id)\". Each host needs its own id.")
+            } else {
+                primaries[entry.id] = entry
             }
-            seen.insert(entry.id)
-            if let label = entry.label, label.isEmpty {
-                issues.append("Host \(entry.id): label must not be empty when present.")
+            validateEntry(entry, issues: &issues)
+        }
+
+        for id in fallbackHosts.keys.sorted() {
+            guard let routes = fallbackHosts[id] else { continue }
+            guard let primary = primaries[id] else {
+                issues.append("Host \(id): fallback routes require a primary host.")
+                continue
             }
-            if case .relay(_, _, let offer) = entry {
+            for route in routes {
+                validateEntry(route, issues: &issues)
+                guard route.id == id else {
+                    issues.append("Host \(id): a fallback route must use its primary host's id.")
+                    continue
+                }
+                guard case .relay(_, _, let primaryOffer, _) = primary,
+                      case .relay(_, _, let offer, _) = route,
+                      primaryOffer.serverId == offer.serverId,
+                      let identity = try? RelaySecurityPinStore.identity(publicKeyB64: offer.daemonPublicKeyB64),
+                      identity == (try? RelaySecurityPinStore.identity(publicKeyB64: primaryOffer.daemonPublicKeyB64)) else {
+                    issues.append("Host \(id): a fallback must be a relay route for the same daemon.")
+                    continue
+                }
+                if primaryOffer.minimumSecurityMode != offer.minimumSecurityMode {
+                    issues.append("Host \(id): all relay routes must share the same minimum security mode.")
+                }
                 do {
-                    _ = try offer.validated()
+                    _ = try offer.relayWebSocketURL()
                 } catch {
-                    // Bare, for the same reason as the registry's copy: a typed
-                    // catch would let a future error escape as an untyped throw
-                    // rather than a named issue.
-                    issues.append("Host \(entry.id): \(errorText(error))")
+                    issues.append("Host \(id): invalid fallback relay endpoint.")
                 }
             }
         }
         guard issues.isEmpty else { throw AppConfigError(issues: issues) }
-        return AppConfig(hosts: hosts)
+        return AppConfig(hosts: hosts, fallbackHosts: fallbackHosts.filter { !$0.value.isEmpty })
+    }
+
+    private static func validateEntry(_ entry: HostEntry, issues: inout [String]) {
+        if let label = entry.label, label.isEmpty {
+            issues.append("Host \(entry.id): label must not be empty when present.")
+        }
+        if case .relay(_, _, let offer, _) = entry {
+            do {
+                _ = try offer.validated()
+            } catch {
+                issues.append("Host \(entry.id): \(errorText(error))")
+            }
+        }
     }
 
     /// A config that skipped validation. Nothing in the app builds one this
     /// way: the fleet's duplicate-id guard is the last line of defence for a
     /// call site that does, and this is how that guard is tested.
     public static func unvalidated(hosts: [HostEntry]) -> AppConfig {
-        AppConfig(hosts: hosts)
+        AppConfig(hosts: hosts, fallbackHosts: [:])
     }
 
-    private init(hosts: [HostEntry]) {
+    private init(hosts: [HostEntry], fallbackHosts: [String: [HostEntry]]) {
         self.hosts = hosts
+        self.fallbackHosts = fallbackHosts
     }
 }
 
@@ -57,24 +102,35 @@ extension ConnectionOfferError {
         switch self {
         case .missingFragment: "no #offer= fragment"
         case .invalidBase64: "the offer is not base64"
-        case .invalidJSON(let detail): "the offer is not valid JSON (\(detail))"
+        case .invalidJSON: "the offer is not valid JSON"
         case .unsupportedVersion(let version): "unsupported offer version \(version)"
+        case .unsupportedMinimumSecurityMode: "minimumSecurityMode must be protected when present"
         case .emptyField(let field): "\(field) must not be empty"
         case .invalidDaemonPublicKey: "daemonPublicKeyB64 is not a 32-byte base64 key"
         }
     }
 }
 
-/// Stable identity of a host list, used to tell a real change in the Paseo
+private let fingerprintKey = SymmetricKey(size: .bits256)
+
+/// Stable within this process, used to tell a real change in the Paseo
 /// app's registry apart from Chromium rewriting its database for keys the
 /// tray does not care about. Ids are unique, so sorting by id is a total
-/// order, and keys are sorted so the same host serializes one way.
+/// order. The keyed digest keeps the serialized credentials out of the fingerprint.
 public func hostsFingerprint(_ hosts: [HostEntry]) -> String {
-    let ordered = hosts.sorted { $0.id < $1.id }
+    fingerprintDigest(hosts.sorted { $0.id < $1.id })
+}
+
+private struct ConfigFingerprintInput: Encodable {
+    let hosts: [HostEntry]
+    let fallbackHosts: [String: [HostEntry]]
+}
+
+private func fingerprintDigest(_ input: some Encodable) -> String {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys]
-    guard let data = try? encoder.encode(ordered) else { return "" }
-    return String(decoding: data, as: UTF8.self)
+    guard let data = try? encoder.encode(input) else { return "" }
+    return Data(HMAC<SHA256>.authenticationCode(for: data, using: fingerprintKey)).base64EncodedString()
 }
 
 extension HostEntry: Codable {
@@ -90,9 +146,10 @@ extension HostEntry: Codable {
             try container.encode(endpoint, forKey: .endpoint)
             try container.encode(useTls, forKey: .useTls)
             try container.encodeIfPresent(password, forKey: .password)
-        case .relay(_, _, let offer):
+        case .relay(_, _, let offer, let password):
             try container.encode("relay", forKey: .type)
             try container.encode(offer, forKey: .offer)
+            try container.encodeIfPresent(password, forKey: .password)
         }
     }
 
@@ -110,7 +167,12 @@ extension HostEntry: Codable {
                 password: try container.decodeIfPresent(String.self, forKey: .password)
             )
         case "relay":
-            self = .relay(id: id, label: label, offer: try container.decode(ConnectionOffer.self, forKey: .offer))
+            self = .relay(
+                id: id,
+                label: label,
+                offer: try container.decode(ConnectionOffer.self, forKey: .offer),
+                password: try container.decodeIfPresent(String.self, forKey: .password)
+            )
         case let other:
             throw DecodingError.dataCorruptedError(forKey: .type, in: container, debugDescription: "unknown host type \(other)")
         }

@@ -4,17 +4,17 @@
 /// through to the daemon's own `hostname`.
 public enum HostEntry: Equatable, Sendable {
     case directTcp(id: String, label: String?, endpoint: String, useTls: Bool, password: String?)
-    case relay(id: String, label: String?, offer: ConnectionOffer)
+    case relay(id: String, label: String?, offer: ConnectionOffer, password: String? = nil)
 
     public var id: String {
         switch self {
-        case .directTcp(let id, _, _, _, _), .relay(let id, _, _): id
+        case .directTcp(let id, _, _, _, _), .relay(let id, _, _, _): id
         }
     }
 
     public var label: String? {
         switch self {
-        case .directTcp(_, let label, _, _, _), .relay(_, let label, _): label
+        case .directTcp(_, let label, _, _, _), .relay(_, let label, _, _): label
         }
     }
 
@@ -24,7 +24,7 @@ public enum HostEntry: Equatable, Sendable {
     public var endpointHint: String {
         switch self {
         case .directTcp(_, _, let endpoint, _, _): endpoint
-        case .relay(_, _, let offer): offer.relay.endpoint
+        case .relay(_, _, let offer, _): offer.relay.endpoint
         }
     }
 }

@@ -9,8 +9,21 @@ struct AppConfigTests {
         .directTcp(id: id, label: label ?? id, endpoint: endpoint, useTls: false, password: nil)
     }
 
-    private func relay(_ id: String, endpoint: String = "relay.paseo.sh:443", key: String = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=") -> HostEntry {
-        .relay(id: id, label: "studio", offer: ConnectionOffer(serverId: "srv-\(id)", daemonPublicKeyB64: key, relay: .init(endpoint: endpoint, useTls: true)))
+    private func relay(
+        _ id: String,
+        endpoint: String = "relay.paseo.sh:443",
+        key: String = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+        password: String? = nil,
+        minimumSecurityMode: RelaySecurityMode? = nil
+    ) -> HostEntry {
+        .relay(
+            id: id, label: "studio",
+            offer: ConnectionOffer(
+                serverId: "srv-\(id)", daemonPublicKeyB64: key, relay: .init(endpoint: endpoint, useTls: true),
+                minimumSecurityMode: minimumSecurityMode
+            ),
+            password: password
+        )
     }
 
     @Test("accepts a well-formed host set")
@@ -78,6 +91,55 @@ struct AppConfigTests {
     func nestedChange() {
         #expect(hostsFingerprint([relay("r", endpoint: "a:443")]) != hostsFingerprint([relay("r", endpoint: "b:443")]))
         #expect(hostsFingerprint([relay("r", key: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=")]) != hostsFingerprint([relay("r", key: "f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f38=")]))
+    }
+
+    @Test("the fingerprint changes with relay password or minimum mode and does not expose the credential")
+    func relayCredentialChange() throws {
+        let password = "synthetic-fixture-password"
+        let authenticated = relay("r", password: password)
+        let pinned = relay("r", password: password, minimumSecurityMode: .protected)
+        let fingerprint = hostsFingerprint([authenticated])
+        #expect(fingerprint != hostsFingerprint([relay("r")]))
+        #expect(fingerprint != hostsFingerprint([pinned]))
+        #expect(!fingerprint.contains(password))
+        #expect(try JSONDecoder().decode(HostEntry.self, from: JSONEncoder().encode(pinned)) == pinned)
+    }
+
+    @Test("fallback routes must match their primary's host, daemon and security floor")
+    func validatesFallbackRoutes() throws {
+        let primary = relay("r", minimumSecurityMode: .protected)
+        let alternate = relay("r", endpoint: "alternate.test:443", minimumSecurityMode: .protected)
+        #expect(try AppConfig.validate(hosts: [primary], fallbackHosts: ["r": [alternate]]).fallbackHosts == ["r": [alternate]])
+        for invalid in [
+            relay("other", minimumSecurityMode: .protected),
+            relay("r", key: "f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f38=", minimumSecurityMode: .protected),
+            relay("r", endpoint: "alternate.test:443"),
+            direct("r"),
+        ] {
+            #expect(throws: AppConfigError.self) {
+                try AppConfig.validate(hosts: [primary], fallbackHosts: ["r": [invalid]])
+            }
+        }
+        #expect(throws: AppConfigError.self) {
+            try AppConfig.validate(hosts: [primary], fallbackHosts: ["missing": [alternate]])
+        }
+    }
+
+    @Test("the configuration fingerprint preserves alternate route preference and detects credential changes")
+    func fallbackFingerprint() throws {
+        let primary = relay("r")
+        let first = relay("r", endpoint: "first.test:443")
+        let second = relay("r", endpoint: "second.test:443")
+        let password = "synthetic-fallback-password"
+        let updated = relay("r", endpoint: "second.test:443", password: password)
+        let config = try AppConfig.validate(hosts: [primary, direct("a")], fallbackHosts: ["r": [first, second]])
+        let reorderedHosts = try AppConfig.validate(hosts: [direct("a"), primary], fallbackHosts: ["r": [first, second]])
+        let reorderedRoutes = try AppConfig.validate(hosts: config.hosts, fallbackHosts: ["r": [second, first]])
+        let updatedRoutes = try AppConfig.validate(hosts: config.hosts, fallbackHosts: ["r": [first, updated]])
+        #expect(config.fingerprint == reorderedHosts.fingerprint)
+        #expect(config.fingerprint != reorderedRoutes.fingerprint)
+        #expect(config.fingerprint != updatedRoutes.fingerprint)
+        #expect(!updatedRoutes.fingerprint.contains(password))
     }
 
     @Test("the fingerprint notices a change to a field the encoder writes last")

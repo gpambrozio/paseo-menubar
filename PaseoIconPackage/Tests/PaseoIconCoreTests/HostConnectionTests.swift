@@ -12,8 +12,14 @@ struct HostConnectionTests {
         let sink = RecordingSink()
         let connection: HostConnection
 
-        init(entry: HostEntry = .directTcp(id: "h1", label: nil, endpoint: "127.0.0.1:6767", useTls: false, password: nil)) throws {
-            connection = try HostConnection(entry: entry, sink: sink, clock: clock, transportFactory: factory.make)
+        init(
+            entry: HostEntry = .directTcp(id: "h1", label: nil, endpoint: "127.0.0.1:6767", useTls: false, password: nil),
+            relaySecurityPins: RelaySecurityPinStore? = nil
+        ) throws {
+            connection = try HostConnection(
+                entry: entry, sink: sink, clock: clock,
+                relaySecurityPins: relaySecurityPins, transportFactory: factory.make
+            )
         }
 
         var transport: FakeTransport { factory.last! }
@@ -53,18 +59,70 @@ struct HostConnectionTests {
         #expect(h.transport.request.url.absoluteString == "ws://127.0.0.1:6767/ws")
     }
 
-    @Test("dials the relay URL and no auth for a relay entry")
+    @Test("dials without exposing the relay password and refuses legacy auth")
     func relayEntry() throws {
         let offer = ConnectionOffer(
             serverId: "srv-1",
             daemonPublicKeyB64: E2EEBox.exportPublicKey(try E2EEBox.generateKeyPair().publicKey),
             relay: .init(endpoint: "relay.paseo.sh:443")
         )
-        let h = try Harness(entry: .relay(id: "r1", label: "Studio", offer: offer))
+        let h = try Harness(entry: .relay(id: "r1", label: "Studio", offer: offer, password: "fixture-relay"))
         #expect(h.sink.events.first == .setHost("r1", label: "Studio", endpointHint: "relay.paseo.sh:443"))
         #expect(h.transport.request.url.absoluteString == "wss://relay.paseo.sh:443/ws?serverId=srv-1&role=client&v=2")
         #expect(h.transport.request.headers.isEmpty)
         #expect(h.transport.request.subprotocols.isEmpty)
+        h.transport.simulateOpen()
+        #expect(h.transport.sentText.count == 1)
+        #expect(!h.transport.sentText.joined().contains("fixture-relay"))
+        h.transport.simulateText(#"{"type":"e2ee_ready"}"#)
+        #expect(h.sink.statuses.last == .securityRejected)
+        #expect(h.transport.sentText.count == 1)
+    }
+
+    @Test("protocol rejection remains visible after automatic retries stop")
+    func incompatibleProtocolIsVisible() async throws {
+        let h = try Harness()
+        h.transport.simulateOpen()
+        h.transport.simulateText(#"{"type":"hello.rejected","reason":"incompatible_protocol"}"#)
+        #expect(h.sink.statuses.last == .incompatibleProtocol)
+        await settle()
+        await h.clock.advance(by: .seconds(60))
+        #expect(h.factory.transports.count == 1)
+        #expect(h.sink.statuses.last == .incompatibleProtocol)
+    }
+
+    @Test("persists a protected floor by key across endpoint changes and a lowered registry floor")
+    func pinFollowsDaemonIdentity() throws {
+        var persisted: [String] = []
+        let firstStore = RelaySecurityPinStore(persistedIdentities: persisted) { persisted = $0 }
+        let key = E2EEBox.exportPublicKey(try E2EEBox.generateKeyPair().publicKey)
+        let firstOffer = ConnectionOffer(serverId: "srv-1", daemonPublicKeyB64: key, relay: .init(endpoint: "first.test:443"))
+        let factory = FakeTransportFactory()
+        let session = try HostConnection.makeSession(
+            for: .relay(id: "r1", label: nil, offer: firstOffer), clock: TestClock(),
+            relaySecurityPins: firstStore, transportFactory: factory.make
+        )
+        #expect(persisted.isEmpty)
+        session.onSecurityMode?(.protected)
+        #expect(persisted.count == 1)
+        #expect(!persisted.contains(key))
+
+        let reopened = RelaySecurityPinStore(persistedIdentities: persisted) { persisted = $0 }
+        var movedOffer = firstOffer
+        movedOffer.relay.endpoint = "moved.test:443"
+        let moved = try Harness(entry: .relay(id: "r1", label: nil, offer: movedOffer), relaySecurityPins: reopened)
+        moved.transport.simulateOpen()
+        moved.transport.simulateText(#"{"type":"e2ee_ready"}"#)
+        #expect(moved.sink.statuses.last == .securityRejected)
+        #expect(moved.transport.sentText.count == 1)
+
+        movedOffer.daemonPublicKeyB64 = E2EEBox.exportPublicKey(try E2EEBox.generateKeyPair().publicKey)
+        let rotated = try Harness(entry: .relay(id: "r1", label: nil, offer: movedOffer), relaySecurityPins: reopened)
+        rotated.transport.simulateOpen()
+        rotated.transport.simulateText(#"{"type":"e2ee_ready"}"#)
+        #expect(rotated.sink.statuses.last == .connecting)
+        #expect(rotated.transport.sentText.count == 2)
+        rotated.connection.close()
     }
 
     @Test("an entry that cannot form a URL throws before the host is registered")
@@ -105,7 +163,7 @@ struct HostConnectionTests {
         #expect(h.sink.statuses == [.connecting, .connected])
     }
 
-    @Test("asks for workspaces sorted by status_priority only")
+    @Test("asks for workspace priority then recent activity before the seed cap")
     func workspaceSort() async throws {
         let h = try Harness()
         h.openWithServerInfo()
@@ -114,7 +172,7 @@ struct HostConnectionTests {
         await settle()
         let request = try jsonObject(try #require(h.transport.sentText.last))["message"] as? [String: Any]
         #expect(request?["type"] as? String == "fetch_workspaces_request")
-        #expect((request?["sort"] as? [[String: String]]) == [["key": "status_priority", "direction": "asc"]])
+        #expect((request?["sort"] as? [[String: String]]) == [["key": "status_priority", "direction": "asc"], ["key": "activity_at", "direction": "desc"]])
         #expect((request?["subscribe"] as? [String: Any])?.isEmpty == true)
     }
 
