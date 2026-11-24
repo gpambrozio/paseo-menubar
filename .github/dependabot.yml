@@ -6,7 +6,7 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
     ignore:
-      # Pinned at exactly 0.4.0, and that one number holds two couplings that
+      # Pinned to exact versions, with two compatibility concerns that
       # pull opposite ways -- which is why no bot should move it.
       #
       # The daemon conversation wants the client old: Paseo guarantees old
@@ -24,6 +24,7 @@ updates:
       - dependency-name: "@getpaseo/client"
       - dependency-name: "@getpaseo/protocol"
       - dependency-name: "@getpaseo/server"
+      - dependency-name: "@getpaseo/relay"
     # Two groups because `applies-to` defaults to version-updates: without the
     # second one, security updates keep arriving one pull request per alert,
     # which is what enabling Dependabot on this repo produced on day one.

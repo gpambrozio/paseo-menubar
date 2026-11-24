@@ -15,6 +15,8 @@ final class AppCoordinator {
     private(set) var loginItemEnabled = false
 
     @ObservationIgnored private let store = HostStore()
+    @ObservationIgnored private let relaySecurityPins = RelaySecurityPinStore(defaults: .standard)
+    @ObservationIgnored private let localCredentialStore = LocalDaemonCredentialStore()
     @ObservationIgnored private var fleet: HostFleet!
     @ObservationIgnored private var session: RegistrySession!
     @ObservationIgnored private var watcher: RegistryWatcher!
@@ -29,7 +31,11 @@ final class AppCoordinator {
     init() {
         fleet = HostFleet(
             store: store,
-            onEntryFailures: { [weak self] failures in self?.session?.noteEntryFailures(failures) }
+            onEntryFailures: { [weak self] failures in self?.session?.noteEntryFailures(failures) },
+            makeConnection: { [relaySecurityPins, localCredentialStore] entry, store in
+                try HostConnection(entry: entry, sink: store, clock: ContinuousClock(),
+                    relaySecurityPins: relaySecurityPins, localCredentialStore: localCredentialStore)
+            }
         )
         watcher = RegistryWatcher(
             resolveDir: { try PaseoRegistry.levelDbDir(appSupportDir: Self.applicationSupportDirectory()) },
@@ -76,6 +82,9 @@ final class AppCoordinator {
     }
 
     // MARK: - Menu actions
+
+    /// Opening a quiet menu must also age out Done rows without a daemon event.
+    func refreshMenu() { rebuild() }
 
     func openWorkspace(_ row: TrayWorkspaceRow) {
         // Every routing decision, including the missing-serverId one, lives in

@@ -162,7 +162,7 @@ public final class RegistrySession {
         // validated before the fleet sees it; this is the only path that builds a config.
         let config: AppConfig
         do {
-            config = try AppConfig.validate(hosts: hosts)
+            config = try AppConfig.validate(hosts: hosts, fallbackHosts: snapshot?.fallbackHosts ?? [:])
         } catch {
             problems.append("The Paseo app's host list could not be used:\n\n\(errorText(error))")
             registryError = problems.joined(separator: "\n\n")
@@ -174,7 +174,7 @@ public final class RegistrySession {
         refreshConfigError()
 
         // Rebuilding tears down live connections, so only when the host set differs.
-        let fingerprint = hostsFingerprint(config.hosts)
+        let fingerprint = config.fingerprint
         if fingerprint == appliedFingerprint { return }
         do {
             try await applyConfig(config)

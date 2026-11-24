@@ -70,7 +70,30 @@ struct E2EEChannelTests {
         #expect(try E2EEBox.importPublicKey(base64: key).count == 32)
         let capabilities = try #require(hello["capabilities"] as? [String: Any])
         #expect(capabilities["binaryCiphertext"] as? Bool == true)
+        let envelope = try #require(hello["protected"] as? [String: Any])
+        #expect(envelope["v"] as? Int == 1)
+        let encoded = try #require(envelope["message"] as? String)
+        let message = try #require(Data(base64Encoded: encoded))
+        #expect(message.count == 50)
+        #expect(Data(message.prefix(32)).base64EncodedString() != key)
         #expect(h.recorder.opens == 0)
+    }
+
+    @Test(arguments: [
+        #"{"type":"e2ee_ready","protected":null}"#,
+        #"{"type":"e2ee_ready","protected":{"v":2,"message":"AA=="}}"#,
+        #"{"type":"e2ee_ready","protected":{"v":1,"message":"AA=="}}"#,
+    ])
+    func malformedProtectedReadyCannotFallBack(_ response: String) throws {
+        let h = try Harness()
+        h.base.simulateOpen()
+        h.channel.send(.text("pending"))
+        h.base.simulateText(response)
+        h.ready()
+        #expect(h.base.closedWith?.code == 4002)
+        #expect(h.base.sent.count == 1)
+        #expect(h.recorder.opens == 0)
+        #expect(h.recorder.closes.count == 1)
     }
 
     @Test("retries the hello every second until ready arrives")

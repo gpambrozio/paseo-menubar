@@ -11,8 +11,8 @@ public final class HostConnection: HostConnecting {
     public static let agentPageLimit = 200
     public static let workspacePageLimit = 200
     public static let seedRetryDelay: Duration = .seconds(2)
-    /// The protocol series this client mirrors; sent as `appVersion` in `hello`.
-    public static let advertisedAppVersion = "0.4.0"
+    /// The client version sent as `appVersion` in `hello`.
+    public static let advertisedAppVersion = "0.4.1"
     /// Exact close reasons the daemon sends when the bearer token is missing or
     /// wrong (`attachAuthenticatedSocket`, websocket-server.js). They surface as
     /// the `disconnected` reason, never as a thrown error.
@@ -28,18 +28,25 @@ public final class HostConnection: HostConnecting {
     private var unsubscribeAgents: (() -> Void)?
     private var unsubscribeWorkspaces: (() -> Void)?
 
+    var relaySecurityMode: RelaySecurityMode? { session.relaySecurityMode }
+
     /// Throws before the host is registered with the sink when the entry cannot
     /// form a URL, so a host with no connection that owns it never appears.
     public init(
         entry: HostEntry,
         sink: any HostSink,
         clock: any Clock<Duration>,
+        relaySecurityPins: RelaySecurityPinStore? = nil,
+        localCredentialStore: LocalDaemonCredentialStore? = nil,
         transportFactory: @escaping TransportFactory = { URLSessionWebSocketTransport(request: $0) }
     ) throws {
         self.entry = entry
         self.sink = sink
         self.clock = clock
-        self.session = try Self.makeSession(for: entry, clock: clock, transportFactory: transportFactory)
+        self.session = try Self.makeSession(
+            for: entry, clock: clock, relaySecurityPins: relaySecurityPins,
+            localCredentialStore: localCredentialStore, transportFactory: transportFactory
+        )
         sink.setHost(entry.id, label: entry.label, endpointHint: entry.endpointHint)
 
         unsubscribeAgents = session.onAgentUpdate { [weak self] update in
@@ -59,6 +66,8 @@ public final class HostConnection: HostConnecting {
     public static func makeSession(
         for entry: HostEntry,
         clock: any Clock<Duration>,
+        relaySecurityPins: RelaySecurityPinStore? = nil,
+        localCredentialStore: LocalDaemonCredentialStore? = nil,
         transportFactory: @escaping TransportFactory
     ) throws -> DaemonSession {
         // Stable across launches: the daemon keys live-session resume by clientId.
@@ -68,17 +77,31 @@ public final class HostConnection: HostConnecting {
             let url = try DaemonEndpoints.daemonWebSocketURL(endpoint: endpoint, useTls: useTls)
             var config = DaemonSessionConfig(url: url, clientId: clientId, appVersion: advertisedAppVersion)
             config.password = password
+            if let localCredentialStore {
+                config.localExpectedServerId = entry.id
+                config.localCredential = {
+                    localCredentialStore.credential(serverId: entry.id, url: url)
+                }
+            }
             return DaemonSession(config: config, transportFactory: transportFactory, clock: clock)
-        case .relay(_, _, let offer):
-            let useTls = offer.relay.useTls ?? DaemonEndpoints.shouldUseTlsForDefaultHostedRelay(offer.relay.endpoint)
-            let url = try DaemonEndpoints.relayWebSocketURL(
-                endpoint: offer.relay.endpoint,
-                useTls: useTls,
-                serverId: offer.serverId
-            )
+        case .relay(_, _, let offer, let password):
+            _ = try offer.validated()
+            let url = try offer.relayWebSocketURL()
             var config = DaemonSessionConfig(url: url, clientId: clientId, appVersion: advertisedAppVersion)
+            config.password = password
             config.e2eeDaemonPublicKeyB64 = offer.daemonPublicKeyB64
-            return DaemonSession(config: config, transportFactory: transportFactory, clock: clock)
+            config.e2eeExpectedServerId = offer.serverId
+            config.e2eeMinimumSecurityMode = offer.minimumSecurityMode
+            guard let relaySecurityPins else {
+                return DaemonSession(config: config, transportFactory: transportFactory, clock: clock)
+            }
+            let identity = try RelaySecurityPinStore.identity(publicKeyB64: offer.daemonPublicKeyB64)
+            config.e2eeMinimumSecurityMode = relaySecurityPins.minimumMode(for: identity, advertised: offer.minimumSecurityMode)
+            let session = DaemonSession(config: config, transportFactory: transportFactory, clock: clock)
+            session.onSecurityMode = { mode in
+                if mode == .protected { relaySecurityPins.pin(identity) }
+            }
+            return session
         }
     }
 
@@ -104,8 +127,18 @@ public final class HostConnection: HostConnecting {
             requestSeed()
         case .disconnected(let reason):
             clearSeedRetry()
+            if session.securityFailureReason != nil {
+                sink.setStatus(entry.id, .securityRejected)
+                stopRetrying()
+                return
+            }
             if let reason, Self.authRejectionReasons.contains(reason) {
                 sink.setStatus(entry.id, .unauthorized)
+                stopRetrying()
+                return
+            }
+            if reason == HelloRejection.incompatibleProtocol.description {
+                sink.setStatus(entry.id, .incompatibleProtocol)
                 stopRetrying()
                 return
             }
@@ -164,9 +197,10 @@ public final class HostConnection: HostConnecting {
             pageLimit: Self.agentPageLimit,
             subscribe: true
         ))
-        // No secondary key: the daemon's own ordering decides the rest.
+        // Request the most recently active rows within each bucket so the
+        // seed page cap cannot prefer older Done rows over recent ones.
         let workspaces = try await session.fetchWorkspaces(FetchWorkspacesOptions(
-            sort: [SortKey(key: "status_priority", direction: "asc")],
+            sort: [SortKey(key: "status_priority", direction: "asc"), SortKey(key: "activity_at", direction: "desc")],
             pageLimit: Self.workspacePageLimit,
             subscribe: true
         ))

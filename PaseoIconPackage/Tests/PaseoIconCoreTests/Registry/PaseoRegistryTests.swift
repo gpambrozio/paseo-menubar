@@ -55,6 +55,144 @@ struct PaseoRegistryTests {
         ))
     }
 
+    @Test("only the profile password applies to a protected relay")
+    func protectedRelayHost() throws {
+        let key = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+        let connections = [
+            ["type": "directTcp", "endpoint": "localhost:6767", "password": "fixture-legacy"],
+            ["type": "relay", "id": "relay-a", "relayEndpoint": "relay.test:443",
+             "daemonPublicKeyB64": key, "minimumSecurityMode": "protected"],
+        ]
+        let legacy = profile(["connections": connections, "preferredConnectionId": "relay-a"])
+        let current = profile(["connections": connections, "preferredConnectionId": "relay-a", "password": "fixture-current"])
+        let cases: [([String: Any], String?)] = [(legacy, nil), (current, "fixture-current")]
+        for (stored, password) in cases {
+            let snapshot = try PaseoRegistry.hostEntries(fromJSON: try json([stored]))
+            #expect(snapshot.failures.isEmpty)
+            #expect(snapshot.hosts.first == .relay(
+                id: "srv_one",
+                label: "Mac.localdomain",
+                offer: ConnectionOffer(
+                    serverId: "srv_one", daemonPublicKeyB64: key, relay: .init(endpoint: "relay.test:443"),
+                    minimumSecurityMode: .protected
+                ),
+                password: password
+            ))
+        }
+    }
+
+    @Test("prefers the selected relay and preserves distinct same-daemon routes in order")
+    func relayRoutePreference() throws {
+        let key = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+        let otherKey = "f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f38="
+        func relay(_ id: String, endpoint: String, key: String, mode: String? = nil) -> [String: Any] {
+            var route: [String: Any] = ["id": id, "type": "relay", "relayEndpoint": endpoint, "daemonPublicKeyB64": key]
+            if let mode { route["minimumSecurityMode"] = mode }
+            return route
+        }
+        let direct: [String: Any] = ["type": "directTcp", "endpoint": "localhost:6767"]
+        var duplicate = relay("first-copy", endpoint: "first.test:443", key: key, mode: "protected")
+        duplicate["useTls"] = true
+        let snapshot = try PaseoRegistry.hostEntries(fromJSON: try json([profile([
+            "connections": [
+                direct,
+                relay("first", endpoint: "first.test:443", key: key),
+                relay("preferred", endpoint: "preferred.test:443", key: key),
+                duplicate,
+                relay("other", endpoint: "other.test:443", key: otherKey),
+                relay("last", endpoint: "last.test:24443", key: key),
+            ],
+            "preferredConnectionId": "preferred",
+            "password": "fixture-current",
+        ])]))
+        #expect(snapshot.failures.isEmpty)
+        #expect(snapshot.hosts.map(\.endpointHint) == ["preferred.test:443"])
+        let fallbacks = try #require(snapshot.fallbackHosts["srv_one"])
+        #expect(fallbacks.map(\.endpointHint) == ["first.test:443", "last.test:24443"])
+        for route in snapshot.hosts + fallbacks {
+            if case .relay(let id, let label, let offer, let password) = route {
+                #expect(id == "srv_one")
+                #expect(label == "Mac.localdomain")
+                #expect(password == "fixture-current")
+                #expect(offer.minimumSecurityMode == .protected)
+            } else {
+                Issue.record("expected the relay for the same daemon and profile")
+            }
+        }
+        _ = try AppConfig.validate(hosts: snapshot.hosts, fallbackHosts: snapshot.fallbackHosts)
+    }
+
+    @Test("a preferred TCP route remains usable beside an invalid relay offer")
+    func preferredDirectWithInvalidRelay() throws {
+        let snapshot = try PaseoRegistry.hostEntries(fromJSON: try json([profile([
+            "connections": [
+                ["id": "relay", "type": "relay", "relayEndpoint": "relay.test:443", "daemonPublicKeyB64": "bad-key"],
+                ["id": "direct", "type": "directTcp", "endpoint": "localhost:6767"],
+            ],
+            "preferredConnectionId": "direct",
+        ])]))
+        #expect(snapshot.hosts.map(\.endpointHint) == ["localhost:6767"])
+        #expect(snapshot.fallbackHosts.isEmpty)
+        #expect(snapshot.failures.isEmpty)
+    }
+
+    @Test("an invalid alternate endpoint is skipped while its same-key security minimum applies")
+    func invalidAlternate() throws {
+        let key = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+        let snapshot = try PaseoRegistry.hostEntries(fromJSON: try json([profile([
+            "connections": [
+                ["id": "direct", "type": "directTcp", "endpoint": "missing-port"],
+                ["id": "primary", "type": "relay", "relayEndpoint": "valid.test:443", "daemonPublicKeyB64": key],
+                ["id": "alternate", "type": "relay", "relayEndpoint": "missing-port", "daemonPublicKeyB64": key,
+                 "minimumSecurityMode": "protected"],
+            ],
+            "preferredConnectionId": "primary",
+        ])]))
+        #expect(snapshot.hosts == [.relay(
+            id: "srv_one", label: "Mac.localdomain",
+            offer: ConnectionOffer(
+                serverId: "srv_one", daemonPublicKeyB64: key, relay: .init(endpoint: "valid.test:443"),
+                minimumSecurityMode: .protected
+            )
+        )])
+        #expect(snapshot.fallbackHosts.isEmpty)
+        #expect(snapshot.failures.isEmpty)
+    }
+
+    @Test("a malformed relay floor names its profile without affecting a healthy sibling")
+    func invalidRelayMinimumMode() throws {
+        for mode in ["legacy", "future", 1, NSNull()] as [Any] {
+            let snapshot = try PaseoRegistry.hostEntries(fromJSON: try json([
+                profile(),
+                profile([
+                    "serverId": "relay-bad",
+                    "label": "Bad relay",
+                    "connections": [[
+                        "type": "relay", "relayEndpoint": "relay.test:443",
+                        "daemonPublicKeyB64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+                        "minimumSecurityMode": mode,
+                    ]],
+                ]),
+            ]))
+            #expect(snapshot.hosts.map(\.id) == ["srv_one"])
+            #expect(snapshot.failures == ["Bad relay — could not be read (connections.0.minimumSecurityMode: expected protected)"])
+        }
+    }
+
+    @Test("direct TCP uses a nonempty profile password, otherwise its route password")
+    func directProfilePassword() throws {
+        for password in ["fixture-direct", "", "  "] {
+            let snapshot = try PaseoRegistry.hostEntries(fromJSON: try json([profile([
+                "password": password,
+                "connections": [["type": "directTcp", "endpoint": "localhost:6767", "password": "fixture-route"]],
+            ])]))
+            #expect(snapshot.hosts == [.directTcp(
+                id: "srv_one", label: "Mac.localdomain", endpoint: "localhost:6767", useTls: false,
+                password: password.isEmpty ? "fixture-route" : password
+            )])
+        }
+    }
+
     @Test("keeps two relay hosts apart even though their connection ids are identical")
     func sharedConnectionId() throws {
         let shared: [String: Any] = [

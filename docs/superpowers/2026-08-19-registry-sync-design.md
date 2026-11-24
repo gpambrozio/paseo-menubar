@@ -39,6 +39,8 @@ in the same file.
 
 ### Why this is sufficient
 
+See the [0.4.1 amendment](2026-09-16-native-swift-app-design.md#041-amendment) for the current relay routing and credential rules.
+
 `RelayHostConnection` carries `relayEndpoint`, `useTls`, and `daemonPublicKeyB64`;
 `HostProfile` carries `serverId`. Those are every field of `ConnectionOfferV2Schema`, so
 the offer `RelayHostSchema` stores is reconstructible without loss. Direct TCP maps

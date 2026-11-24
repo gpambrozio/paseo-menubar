@@ -12,18 +12,20 @@ struct HostFleetTests {
         private(set) var created: [(entry: HostEntry, closed: Bool)] = []
         /// Every construction and teardown, in the order they happened.
         private(set) var events: [String] = []
+        private(set) var sinks: [any HostSink] = []
         var failOn: Set<String>
 
         init(failOn: Set<String> = []) {
             self.failOn = failOn
         }
 
-        func make(_ entry: HostEntry, _ store: HostStore) throws -> any HostConnecting {
+        func make(_ entry: HostEntry, _ store: any HostSink) throws -> any HostConnecting {
             if failOn.contains(entry.id) { throw FakeFailure(id: entry.id) }
             events.append("create:\(entry.id)")
             store.setHost(entry.id, label: entry.label, endpointHint: entry.endpointHint)
             let index = created.count
             created.append((entry, false))
+            sinks.append(store)
             return FakeConnection { [weak self] in
                 guard let self else { return }
                 self.events.append("close:\(entry.id)")
@@ -73,6 +75,38 @@ struct HostFleetTests {
         }
 
         var lastFailures: [String] { failures.last ?? [] }
+    }
+
+    @Test("fleet retains saved fallback routes through retry and config changes")
+    func savedRelayFallback() async throws {
+        func route(_ endpoint: String) -> HostEntry {
+            .relay(id: "studio", label: nil, offer: ConnectionOffer(
+                serverId: "studio", daemonPublicKeyB64: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+                relay: .init(endpoint: endpoint, useTls: true), minimumSecurityMode: .protected))
+        }
+        let h = Harness()
+        defer { h.fleet.closeAll() }
+        let preferred = route("old.test:443")
+        let fallback = route("current.test:443")
+        h.fleet.apply(try AppConfig.validate(hosts: [preferred], fallbackHosts: ["studio": [fallback]]))
+        try #require(h.connections.sinks.first).setStatus("studio", .disconnected)
+        await settle()
+        #expect(h.connections.created.map(\.entry) == [preferred, fallback])
+        try #require(h.connections.sinks.last).setStatus("studio", .connected)
+        #expect(h.store.snapshot().map(\.status) == [.connected])
+        #expect(h.connections.leaked == ["studio"])
+
+        h.fleet.retry("studio")
+        #expect(h.connections.created.last?.entry == preferred)
+        try #require(h.connections.sinks.last).setStatus("studio", .disconnected)
+        await settle()
+        #expect(h.connections.created.last?.entry == fallback)
+        let next = route("new.test:443")
+        h.fleet.apply(try AppConfig.validate(hosts: [preferred], fallbackHosts: ["studio": [next]]))
+        try #require(h.connections.sinks.last).setStatus("studio", .disconnected)
+        await settle()
+        #expect(h.connections.created.last?.entry == next)
+        #expect(h.connections.leaked == ["studio"])
     }
 
     @Test("keeps the rest of the fleet when one entry cannot be used")

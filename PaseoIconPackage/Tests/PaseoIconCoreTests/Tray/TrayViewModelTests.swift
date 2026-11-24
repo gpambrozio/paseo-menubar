@@ -3,6 +3,83 @@ import Testing
 @testable import PaseoIconCore
 
 struct TrayViewModelTests {
+    @Test("Done sorts recent interaction across hosts before limiting visible rows")
+    func doneRecentInteractionOrder() throws {
+        let now = try Date("2026-11-24T00:00:00Z", strategy: .iso8601)
+        let older = (0..<16).map { WorkspaceDescriptor(id: "older\($0)", name: "older", status: "done", activityAt: "2026-11-20T00:00:00Z") }
+        let newest = WorkspaceDescriptor(id: "latest", name: "latest", status: "done", activityAt: "2026-11-23T00:00:00.001Z")
+        let next = WorkspaceDescriptor(id: "next", name: "next", status: "done", activityAt: "2026-11-23T08:00:00+08:00")
+        let staleInteraction = WorkspaceDescriptor(id: "state-only", name: "state-only", status: "done", activityAt: "2026-11-19T00:00:00Z", statusEnteredAt: "2026-11-23T23:00:00Z")
+        let section = try #require(TrayViewModelBuilder.build(hosts: [
+            Fixture.host(older + [staleInteraction], hostId: "a"),
+            Fixture.host([next, newest], hostId: "b"),
+        ], now: now).sections.first)
+        #expect(section.rows.map(\.workspaceId) == ["latest", "next"] + (0..<13).map { "older\($0)" })
+        #expect(section.overflow == 4)
+    }
+
+    @Test("Done falls back for missing dates and preserves ties, with unknown dates last")
+    func doneDateFallbackAndTies() throws {
+        let now = try Date("2026-11-24T00:00:00Z", strategy: .iso8601)
+        let input = [
+            WorkspaceDescriptor(id: "unknown-a", name: "a", status: "done"),
+            WorkspaceDescriptor(id: "created", name: "c", status: "done", activityAt: "invalid", createdAt: "2026-11-21T00:00:00Z"),
+            WorkspaceDescriptor(id: "same-a", name: "a", status: "done", activityAt: "2026-11-22T00:00:00Z"),
+            WorkspaceDescriptor(id: "unknown-b", name: "b", status: "done", activityAt: "bad"),
+            WorkspaceDescriptor(id: "entered", name: "e", status: "done", statusEnteredAt: "2026-11-23T00:00:00Z"),
+            WorkspaceDescriptor(id: "same-b", name: "b", status: "done", activityAt: "2026-11-22T00:00:00Z"),
+        ]
+        let model = TrayViewModelBuilder.build(hosts: [Fixture.host(input)], now: now)
+        #expect(model.sections.flatMap(\.rows).map(\.workspaceId) == ["entered", "same-a", "same-b", "created", "unknown-a", "unknown-b"])
+    }
+
+    @Test("Done expires after seven days of inactivity, including the exact boundary")
+    func doneAgeBoundary() throws {
+        let now = try Date("2026-11-24T00:00:00Z", strategy: .iso8601)
+        func workspace(_ id: String, status: String = "done", activity: String? = nil, entered: String? = nil, created: String? = nil) -> WorkspaceDescriptor {
+            WorkspaceDescriptor(id: id, name: id, status: status, activityAt: activity, statusEnteredAt: entered, createdAt: created)
+        }
+        let input = [
+            workspace("old", entered: "2026-11-16T23:59:59Z"),
+            workspace("boundary", entered: "2026-11-17T00:00:00Z"),
+            workspace("offset-boundary", entered: "2026-11-17T08:00:00+08:00"),
+            workspace("recent", entered: "2026-11-17T00:00:00.001Z"),
+            workspace("new-completion", activity: "2026-01-01T00:00:00Z", entered: "2026-11-23T00:00:00Z"),
+            workspace("new-activity", activity: "2026-11-23T00:00:00Z", entered: "2026-01-01T00:00:00Z"),
+            workspace("old-empty", created: "2026-01-01T00:00:00Z"),
+            workspace("new-empty", created: "2026-11-23T00:00:00Z"),
+            workspace("unknown-date"),
+            workspace("invalid-date", entered: "invalid"),
+        ]
+        let model = TrayViewModelBuilder.build(hosts: [Fixture.host(input)], now: now)
+        #expect(model.sections.flatMap(\.rows).map(\.workspaceId) == ["new-activity", "new-empty", "recent", "new-completion", "unknown-date", "invalid-date"])
+        #expect(model.count == 0)
+        let later = TrayViewModelBuilder.build(hosts: [Fixture.host([input[3]])], now: now.addingTimeInterval(1))
+        #expect(later.sections.isEmpty)
+    }
+
+    @Test("age filtering never hides running or actionable workspaces")
+    func ageDoesNotHideActiveWork() throws {
+        let now = try Date("2026-11-24T00:00:00Z", strategy: .iso8601)
+        let workspaces = ["needs_input", "failed", "attention", "running"].map {
+            WorkspaceDescriptor(id: $0, name: $0, status: $0, statusEnteredAt: "2025-01-01T00:00:00Z")
+        }
+        let model = TrayViewModelBuilder.build(hosts: [Fixture.host(workspaces)], now: now)
+        #expect(model.sections.flatMap(\.rows).count == 4)
+        #expect(model.count == 3)
+    }
+
+    @Test("Done age filtering precedes the row cap and overflow count")
+    func doneAgeBeforeCap() throws {
+        let now = try Date("2026-11-24T00:00:00Z", strategy: .iso8601)
+        let old = (0..<20).map { WorkspaceDescriptor(id: "old\($0)", name: "old", status: "done", statusEnteredAt: "2025-01-01T00:00:00Z") }
+        let recent = (0..<17).map { WorkspaceDescriptor(id: "recent\($0)", name: "recent", status: "done", statusEnteredAt: "2026-11-23T00:00:00Z") }
+        let section = try #require(TrayViewModelBuilder.build(hosts: [Fixture.host(old + recent)], now: now).sections.first)
+        #expect(section.rows.count == 15)
+        #expect(section.rows.allSatisfy { $0.workspaceId.hasPrefix("recent") })
+        #expect(section.overflow == 2)
+    }
+
     private func build(_ hosts: [HostSnapshot], configError: String? = nil) -> TrayViewModel {
         TrayViewModelBuilder.build(hosts: hosts, configError: configError)
     }

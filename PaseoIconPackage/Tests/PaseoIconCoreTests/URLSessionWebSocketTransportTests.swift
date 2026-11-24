@@ -14,6 +14,23 @@ struct URLSessionWebSocketTransportTests {
         var errors: [String] = []
     }
 
+    @Test("does not follow a WebSocket redirect to a different endpoint")
+    func refusesRedirect() async throws {
+        let harness = try await NodeHarness(script: "swift-test-ws-echo.mjs")
+        defer { harness.stop() }
+        let port = try harness.int("redirectPort")
+        let transport = URLSessionWebSocketTransport(request: TransportRequest(
+            url: try #require(URL(string: "ws://127.0.0.1:\(port)/"))))
+        defer { transport.close(code: 1000, reason: "test complete") }
+        let recorder = Recorder()
+        transport.onOpen = { recorder.opened = true }
+        transport.onClose = { recorder.close = $0 }
+        transport.connect()
+        #expect(await eventually { recorder.close != nil || recorder.opened })
+        #expect(!recorder.opened)
+        #expect(recorder.close != nil)
+    }
+
     @Test("sends the bearer header and subprotocol, echoes text and binary, and surfaces the close reason")
     func roundTrip() async throws {
         let harness = try await NodeHarness(script: "swift-test-ws-echo.mjs")

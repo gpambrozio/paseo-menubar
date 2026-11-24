@@ -136,13 +136,15 @@ public enum TrayViewModelBuilder {
     /// Rows in a section cap here; the rest become an explicit overflow row.
     static let sectionRowCap = 15
 
-    public static func build(hosts: [HostSnapshot], configError: String? = nil) -> TrayViewModel {
+    public static func build(hosts: [HostSnapshot], configError: String? = nil, now: Date = Date()) -> TrayViewModel {
+        let doneCutoff = now.addingTimeInterval(-7 * 24 * 60 * 60)
         let showHostLabel = hosts.count > 1
         // A disconnected host's workspaces are data we cannot vouch for, so
         // they never reach the icon, the count, or the menu.
         let live = hosts.filter { $0.status == .connected }
 
         var rowsByBucket: [WorkspaceStateBucket: [TrayWorkspaceRow]] = [:]
+        var doneRows: [(row: TrayWorkspaceRow, interaction: Date?)] = []
         var unknownStates: [String: Int] = [:]
         var counted = 0
 
@@ -163,6 +165,9 @@ public enum TrayViewModelBuilder {
                     unknownStates[workspace.status, default: 0] += 1
                     continue
                 }
+                if bucket == .done, let lastActivity = doneActivityDate(workspace), lastActivity <= doneCutoff {
+                    continue
+                }
                 let row = TrayWorkspaceRow(
                     hostId: host.hostId,
                     serverId: host.serverId,
@@ -172,10 +177,26 @@ public enum TrayViewModelBuilder {
                     projectName: workspace.projectDisplayName,
                     hostLabel: showHostLabel ? hostName : nil
                 )
-                rowsByBucket[bucket, default: []].append(row)
+                if bucket == .done {
+                    doneRows.append((row, parseDaemonDate(workspace.activityAt)
+                        ?? parseDaemonDate(workspace.statusEnteredAt) ?? parseDaemonDate(workspace.createdAt)))
+                } else {
+                    rowsByBucket[bucket, default: []].append(row)
+                }
                 if countedBuckets.contains(bucket) { counted += 1 }
             }
         }
+
+        // Sort the combined fleet before taking the visible page. Keep the
+        // incoming order for ties and place unknown dates after known ones.
+        rowsByBucket[.done] = doneRows.enumerated().sorted { lhs, rhs in
+            switch (lhs.element.interaction, rhs.element.interaction) {
+            case let (left?, right?) where left != right: return left > right
+            case (_?, nil): return true
+            case (nil, _?): return false
+            default: return lhs.offset < rhs.offset
+            }
+        }.map { $0.element.row }
 
         let sections = sectionOrder.compactMap { bucket -> TrayMenuSection? in
             guard let rows = rowsByBucket[bucket], !rows.isEmpty else { return nil }
@@ -198,6 +219,20 @@ public enum TrayViewModelBuilder {
             // state needs attention is exactly what this build cannot know.
             unknownStates: unknownStates
         )
+    }
+
+    /// Use daemon timestamps rather than an agent index that may be truncated.
+    /// A newly completed old workspace stays visible. Missing/invalid dates do
+    /// not establish that a workspace is old, so keep those rows visible.
+    private static func doneActivityDate(_ workspace: WorkspaceDescriptor) -> Date? {
+        return [parseDaemonDate(workspace.activityAt), parseDaemonDate(workspace.statusEnteredAt)].compactMap { $0 }.max()
+            ?? parseDaemonDate(workspace.createdAt)
+    }
+
+    private static func parseDaemonDate(_ value: String?) -> Date? {
+        guard let value else { return nil }
+        return (try? Date(value, strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true)))
+            ?? (try? Date(value, strategy: .iso8601))
     }
 
     /// Groups a host's agents by workspace, most relevant first, so a click

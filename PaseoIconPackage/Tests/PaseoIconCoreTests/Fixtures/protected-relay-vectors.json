@@ -1,0 +1,44 @@
+{
+  "provenance": "@getpaseo/relay@0.17.3 dist/noise/index.js and dist/protected-records.js",
+  "staticPublicKey": "B6N8vBQgk8i3VdwbEOhstCY3StFqqFPtC9/AsrhtHHw=",
+  "clientEphemeral": "ISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0A=",
+  "hello": "WGmv9FBUlzLLqu1eXfmzCm2jHLDldCutWtShp2jxpns1/Esh4Lo35autr5eRLhmB/iA=",
+  "ready": "ZLEBsdC+WocEvQePmJUAH8A+jp+VIvGI3RKNmEbUhGaleAfU4jIU5LgAhaE2H9ct+M8=",
+  "clientText": "hello 世界 🌉",
+  "clientTextWire": "ACeSyzAv6gUt8ToHEzCdECMo9z0VVXihiVKJn71wqSyHaUkXi+ZKu14=",
+  "clientEmptyWire": "ABbfpC0WeMb9iUZ7jt6qYnbw8jk+0oC+",
+  "clientMultichunkBytes": 65530,
+  "clientMultichunkWireBytes": 65578,
+  "clientMultichunkSHA256": "f636e2981f8819f98a7a55cac52acb016e76e883ca7567fabd0f0ae0a501b39f",
+  "serverText": "ready ✓",
+  "serverTextWire": "AB/nO0TrNdw/OyBjXYahjHuIRVf9BgzYrXBU3O04ea+n",
+  "serverBinary": "AP8qEQ==",
+  "serverBinaryWire": "ABqOKRKwYjKw+3hWB7RmV0Ojm/lDfgtrvExY0A==",
+  "serverEmptyWire": "ABZR6cPT91Mke1Hx78uJo32izyU9AIHU",
+  "readyWithoutBinary": "ZLEBsdC+WocEvQePmJUAH8A+jp+VIvGI3RKNmEbUhGaleWsvgMiPjvsvK8OfYbJ02+k=",
+  "fallbackBinaryWire": "ABrfpC0WeMJM/efgtkTbk0jnFFgY6RjlBKYEbA==",
+  "invalidReady": [
+    {
+      "error": "Unsupported protected parameter version",
+      "offeredBinary": true,
+      "ready": "ZLEBsdC+WocEvQePmJUAH8A+jp+VIvGI3RKNmEbUhGameGJxeK6+Juimpgp5+h0REiM="
+    },
+    {
+      "error": "Reserved protected parameter flag set",
+      "offeredBinary": true,
+      "ready": "ZLEBsdC+WocEvQePmJUAH8A+jp+VIvGI3RKNmEbUhGaletSKHV4LOT5f0eQIpI27vgM="
+    },
+    {
+      "error": "Invalid protected parameter payload",
+      "offeredBinary": true,
+      "ready": "ZLEBsdC+WocEvQePmJUAH8A+jp+VIvGI3RKNmEbUhGalqQe3EJUCGceaTL78j6Hxnw=="
+    },
+    {
+      "error": "Daemon selected an unoffered protected parameter",
+      "offeredBinary": false,
+      "ready": "ZLEBsdC+WocEvQePmJUAH8A+jp+VIvGI3RKNmEbUhGalePNvV125ug2cMRjms6WsJLw="
+    }
+  ],
+  "counterKey": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1+f4A=",
+  "highCounterCiphertext": "6BW9raNipQTy6adAFqY9bwbEtw=="
+}

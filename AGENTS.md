@@ -5,7 +5,8 @@ shows whether any workspace needs you, across every configured host, and deep-li
 the Paseo desktop app on click. It is a status indicator and launcher — it never runs
 agents itself.
 
-It mirrors the Paseo sidebar: same rows, same five state buckets, same labels. The state
+It mirrors the Paseo sidebar's five state buckets and labels, with Done's recency
+filter and ordering defined in the 0.4.1 amendment. The state
 comes from the daemon, never from a client-side derivation. The design docs explain why.
 
 **The app is a Swift package.** `PaseoIconPackage/` holds everything that ships:
@@ -26,7 +27,7 @@ upstream change will land.
 | --- | --- |
 | `2026-08-16-standalone-menubar-app-design.md` | **Binding** for behaviour. Settles any disagreement about what the tray shows. |
 | `2026-08-19-registry-sync-design.md` | **Binding.** Supersedes the parts of the doc above that describe `config.json` as the source of hosts and clipboard pairing as the way to add one. |
-| `2026-09-16-native-swift-app-design.md` | **Binding** for the native build: the wire contract, the relay E2EE contract, the module map. Changes how the app is built, not what it shows. |
+| `2026-09-16-native-swift-app-design.md` | **Binding** for the native build: the wire contract, the relay E2EE contract, the module map. The [0.4.1 amendment](docs/superpowers/2026-09-16-native-swift-app-design.md#041-amendment) also governs the affected registry and Done behaviour. |
 | `plans/2026-09-16-native-app-parity.md` | Historical. Plan 2 of the native build, executed 2026-09-16. Its code blocks were refreshed from the committed sources as review changed them, but the committed code wins. |
 | `plans/2026-09-16-native-app-foundation.md` | Historical. Plan 1 of the native build. |
 | `2026-08-16-paseo-icon-implementation-plan.md` | Historical. Describes the deleted Electron app. Contains known defects. |
@@ -39,7 +40,7 @@ written before its code, and review changed both of them afterwards.
 
 The rule that shapes this codebase: **if it does not touch AppKit or SwiftUI, it does not
 belong in the app target.** Everything else is pure or takes its collaborators by
-injection, and is tested without a menu bar. That is why 351 tests can cover a menu bar
+injection, and is tested without a menu bar. That is why 404 tests can cover a menu bar
 app that no agent can see.
 
 | Path under `PaseoIconPackage/Sources/` | Owns |
@@ -83,8 +84,9 @@ layer, where nothing could test it. If you find yourself adding a decision to
   headings could not be given weight and colour, and nothing else could be styled either.
   The panel belongs to the menu bar item and closes when it resigns key; a free-standing
   window, a preferences window included, is still deliberately deferred.
-- **The wire is pinned to `@getpaseo/protocol` 0.4.0 and `protocolVersion: 1`**, and the
-  Swift structs are a hand-written copy of that slice. Paseo guarantees that old clients
+- **The wire keeps `protocolVersion: 1`.** The [0.4.1 amendment](docs/superpowers/2026-09-16-native-swift-app-design.md#041-amendment)
+  extends the original 0.4.0 slice with 0.17.3 authentication and relay records.
+  The Swift structs remain a hand-written copy. Paseo guarantees that old clients
   parse messages from new daemons; that guarantee is what makes the copy safe. The npm
   packages that remain are test harnesses, not dependencies of the app.
 - **`@MainActor` where the code says so, and callbacks that cross a thread must hop.**
@@ -102,6 +104,7 @@ layer, where nothing could test it. If you find yourself adding a decision to
 - **No silent caps.** Any truncated list renders a visible overflow row, and every row
   carries its own identity — SwiftUI's `ForEach` keys on it, so two rows that collide
   become one, which is a silent cap by another route. That has been fixed twice.
+  Done's seven-day eligibility filter applies before its count and overflow calculation.
 - **Never derive a workspace's state.** Render `WorkspaceDescriptor.status`, the bucket the
   daemon computed. The rule lives in the daemon and changes there; a second copy here is a
   second answer, and no test in either repo would catch the day they diverge. A bucket this
@@ -110,7 +113,7 @@ layer, where nothing could test it. If you find yourself adding a decision to
   `STATUS_BUCKET_ORDER` and `STATUS_BUCKET_LABELS` in
   `packages/app/src/hooks/sidebar-status-view-model.ts` upstream. Paseo's glossary rule
   is "UI label wins, no synonyms", so the tray says what the sidebar says.
-- **The daemon's order is the order.** `fetch_workspaces_request` sorts by
+- **The daemon's order is the order, except for Done's amended recency rules.** `fetch_workspaces_request` sorts by
   `status_priority`, and the store preserves that with an insertion-ordered map because the
   menu caps each section. Re-sorting here shows a different fifteen than the sidebar does.
 - **Hosts come from the Paseo desktop app's Chromium localStorage, and nothing
@@ -140,7 +143,7 @@ layer, where nothing could test it. If you find yourself adding a decision to
 ```bash
 SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm install   # Homebrew libvips breaks sharp's prebuild
 npm test                                    # vitest (scripts) then swift test
-swift test --package-path PaseoIconPackage  # 351 Swift tests, 32 suites
+swift test --package-path PaseoIconPackage  # 404 Swift tests, 36 suites
 npx vitest run                              # 46 tests, 4 files — build tooling only
 npm run typecheck
 npm run icons                               # tray glyphs and the app icon

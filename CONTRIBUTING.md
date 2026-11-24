@@ -57,13 +57,19 @@ A few rules that are easy to violate without knowing:
   and takes the menu bar item with it.
 - **No silent caps.** Any truncated list renders a visible overflow row, and
   every row needs its own identity — SwiftUI's `ForEach` keys on it, so two rows
-  that collide become one.
-- **The wire is pinned** to `@getpaseo/protocol` 0.4.0 and `protocolVersion: 1`
-  — see below.
+  that collide become one. Done's count and overflow apply to its seven-day window.
+- **The wire stays at `protocolVersion: 1`**, with the scoped 0.4.1 amendment
+  to the original `@getpaseo/protocol` 0.4.0 slice — see below.
 
 ## Why the wire is pinned
 
-The Swift structs in `PaseoIconCore/Daemon/` are a hand-written copy of one slice
+The [0.4.1 amendment](docs/superpowers/2026-09-16-native-swift-app-design.md#041-amendment)
+extends the original baseline described below with protected relay and local-credential
+authentication, while retaining `protocolVersion: 1`. Integration harnesses now pin
+`@getpaseo/server` and `@getpaseo/relay` to 0.17.3. This is a deliberate compatibility
+proposal; it does not establish runtime coverage for every older daemon version.
+
+The Swift structs in `PaseoIconCore/Daemon/` started as a hand-written copy of one slice
 of `@getpaseo/protocol` 0.4.0, and the handshake sends `protocolVersion: 1`.
 Nothing in the app links a Paseo npm package any more, so the pin is a discipline
 rather than a dependency range — which makes it easier to drift by accident, not
@@ -74,9 +80,9 @@ clients parse messages from new daemons. That guarantee runs one direction only:
 nothing says a *new* client can talk to an *old* daemon. Users install this app on
 their own schedule and run whatever daemon their Paseo app ships, so teaching the
 tray a newer message shape could float it past a user's daemon into the direction
-that is not covered. `APP_VERSION` in the connection code is the same number
-again — it goes out in the handshake as `appVersion`, and the daemon gates
-provider visibility on it, so the two move together or not at all.
+that is not covered. `APP_VERSION` goes out in the handshake as `appVersion`,
+and the daemon gates provider visibility on it. The 0.4.1 candidate sends 0.4.1;
+moving the test daemon pin to 0.17.3 does not advertise that version as the client.
 
 **Reading the desktop app's registry pulls the other way.** The host list is
 parsed out of the Paseo desktop app's own storage, and the desktop app is *not*

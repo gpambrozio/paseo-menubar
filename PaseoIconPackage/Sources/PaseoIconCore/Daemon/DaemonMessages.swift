@@ -1,3 +1,4 @@
+import CoreFoundation
 import Foundation
 
 // The slice of `@getpaseo/protocol` 0.4.0 `messages.ts` this app speaks.
@@ -9,10 +10,12 @@ public struct ServerInfo: Equatable, Sendable {
     public let serverId: String
     /// Non-string values become nil, as upstream's `ServerInfoHostnameSchema` does.
     public let hostname: String?
+    public let relayProtectedSecurity: Bool
 
-    public init(serverId: String, hostname: String?) {
+    public init(serverId: String, hostname: String?, relayProtectedSecurity: Bool = false) {
         self.serverId = serverId
         self.hostname = hostname
+        self.relayProtectedSecurity = relayProtectedSecurity
     }
 }
 
@@ -46,6 +49,8 @@ public struct WorkspaceDescriptor: Codable, Equatable, Sendable {
     public let status: String
     public let archivingAt: String?
     public let activityAt: String?
+    public let statusEnteredAt: String?
+    public let createdAt: String?
     public let diffStat: DiffStat?
 
     public var bucket: WorkspaceStateBucket? { WorkspaceStateBucket(rawValue: status) }
@@ -58,6 +63,8 @@ public struct WorkspaceDescriptor: Codable, Equatable, Sendable {
         status: String,
         archivingAt: String? = nil,
         activityAt: String? = nil,
+        statusEnteredAt: String? = nil,
+        createdAt: String? = nil,
         diffStat: DiffStat? = nil
     ) {
         self.id = id
@@ -67,6 +74,8 @@ public struct WorkspaceDescriptor: Codable, Equatable, Sendable {
         self.status = status
         self.archivingAt = archivingAt
         self.activityAt = activityAt
+        self.statusEnteredAt = statusEnteredAt
+        self.createdAt = createdAt
         self.diffStat = diffStat
     }
 }
@@ -181,12 +190,32 @@ struct SessionEnvelope<Message: Encodable>: Encodable {
 }
 
 struct HelloMessage: Encodable {
+    enum Auth: Encodable {
+        case password(String)
+        case localCredential(String)
+
+        private enum CodingKeys: String, CodingKey { case kind, password, token }
+
+        func encode(to encoder: any Encoder) throws {
+            var fields = encoder.container(keyedBy: CodingKeys.self)
+            switch self {
+            case .password(let value):
+                try fields.encode("password", forKey: .kind)
+                try fields.encode(value, forKey: .password)
+            case .localCredential(let value):
+                try fields.encode("localCredential", forKey: .kind)
+                try fields.encode(value, forKey: .token)
+            }
+        }
+    }
+
     let type = "hello"
     let clientId: String
     let clientType: String
     let protocolVersion: Int
     let appVersion: String
     let capabilities: [String: Bool]
+    let auth: Auth?
 }
 
 struct FetchRequestMessage: Encodable {
@@ -203,6 +232,7 @@ struct FetchRequestMessage: Encodable {
 enum InboundMessage: Equatable {
     case pong
     case serverInfo(ServerInfo)
+    case helloRejected(HelloRejection)
     case agentUpdate(AgentUpdate)
     case workspaceUpdate(WorkspaceUpdate)
     /// A `*_response` session message; `payload` is its payload re-serialized for typed decoding.
@@ -211,9 +241,24 @@ enum InboundMessage: Equatable {
     case other(type: String)
 }
 
+enum HelloRejection: String, Equatable {
+    case passwordRequired = "password_required"
+    case incorrectPassword = "incorrect_password"
+    case incompatibleProtocol = "incompatible_protocol"
+
+    var description: String {
+        switch self {
+        case .passwordRequired: "Password required"
+        case .incorrectPassword: "Incorrect password"
+        case .incompatibleProtocol: "Incompatible protocol version"
+        }
+    }
+}
+
 enum InboundParseError: Error, Equatable {
     case notAnObject
     case missingType
+    case missingServerIdentity
     case malformed(String)
 }
 
@@ -224,6 +269,10 @@ enum InboundParser {
         }
         guard let envelopeType = root["type"] as? String else { throw InboundParseError.missingType }
         if envelopeType == "pong" { return .pong }
+        if envelopeType == "hello.rejected", let reason = root["reason"] as? String,
+           let rejection = HelloRejection(rawValue: reason) {
+            return .helloRejected(rejection)
+        }
         guard envelopeType == "session", let message = root["message"] as? [String: Any] else {
             return .other(type: envelopeType)
         }
@@ -234,9 +283,15 @@ enum InboundParser {
             guard payload["status"] as? String == "server_info" else { return .other(type: "status") }
             guard let serverId = (payload["serverId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !serverId.isEmpty else {
-                throw InboundParseError.malformed("server_info without serverId")
+                throw InboundParseError.missingServerIdentity
             }
-            return .serverInfo(ServerInfo(serverId: serverId, hostname: payload["hostname"] as? String))
+            let features = payload["features"] as? [String: Any]
+            let protectedSupport = features?["relayProtectedSecurity"] as? NSNumber
+            return .serverInfo(ServerInfo(
+                serverId: serverId,
+                hostname: payload["hostname"] as? String,
+                relayProtectedSecurity: protectedSupport.map { CFGetTypeID($0) == CFBooleanGetTypeID() && $0.boolValue } ?? false
+            ))
         case "agent_update":
             switch payload["kind"] as? String {
             case "upsert":

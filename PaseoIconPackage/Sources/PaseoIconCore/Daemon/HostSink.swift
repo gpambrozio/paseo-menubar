@@ -3,6 +3,10 @@ public enum HostStatus: String, Equatable, Sendable, CaseIterable {
     case connected
     case disconnected
     case unauthorized
+    /// The host cannot be admitted under its required relay security policy.
+    case securityRejected
+    /// The daemon rejected this client's application protocol version.
+    case incompatibleProtocol
     /// The entry itself is unusable, e.g. an endpoint that cannot form a URL.
     case invalid
 }

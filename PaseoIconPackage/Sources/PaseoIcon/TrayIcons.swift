@@ -9,6 +9,20 @@ import PaseoIconCore
 enum TrayIcons {
     private static var cache: [WorkspaceStateBucket: NSImage] = [:]
 
+    private static func resourceBundle() throws -> Bundle {
+        // SwiftPM's generated accessor searches beside the executable and then
+        // in the developer's .build directory. A packaged macOS app keeps the
+        // bundle under Contents/Resources, so resolve that location explicitly.
+        if Bundle.main.bundleURL.pathExtension == "app" {
+            guard let url = Bundle.main.resourceURL?.appendingPathComponent("PaseoIconPackage_PaseoIcon.bundle"),
+                  let bundle = Bundle(url: url) else {
+                throw TrayIconError.missing("PaseoIconPackage_PaseoIcon.bundle")
+            }
+            return bundle
+        }
+        return .module
+    }
+
     /// A missing file yields an empty image rather than an error, and an empty
     /// image is a status item with no visible icon: no way to open the menu,
     /// no way to quit. The icons are generated rather than committed, so this
@@ -25,13 +39,14 @@ enum TrayIcons {
         // the 16pt box is what makes AppKit choose by scale rather than size.
         let box = NSSize(width: 16, height: 16)
         let image = NSImage(size: box)
+        let resources = try resourceBundle()
         // Both are required, not merely preferred. The generator writes the
         // pair in one pass, so a half-written set means a half-run generator —
         // and accepting the survivor would put 1x art on a Retina menu bar
         // silently, which is the failure this whole change exists to remove.
         for suffix in ["", "@2x"] {
             let file = "\(name)Template\(suffix)"
-            guard let url = Bundle.module.url(forResource: file, withExtension: "png", subdirectory: "TrayIcons"),
+            guard let url = resources.url(forResource: file, withExtension: "png", subdirectory: "TrayIcons"),
                   let rep = NSImageRep(contentsOf: url) else {
                 throw TrayIconError.missing(file)
             }

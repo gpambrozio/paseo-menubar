@@ -1,7 +1,7 @@
 {
   "name": "paseo-menubar",
   "productName": "Paseo Icon",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Menu-bar indicator for Paseo agents",
   "author": "Gustavo Ambrozio",
   "license": "AGPL-3.0-or-later",
@@ -16,7 +16,7 @@
     "dist": "npm run icons && node scripts/native-bundle.mjs"
   },
   "devDependencies": {
-    "@getpaseo/server": "0.4.0",
+    "@getpaseo/server": "0.17.3",
     "@types/node": "^26.6.6",
     "classic-level": "^3.0.0",
     "lucide-static": "1.73.0",
@@ -25,7 +25,8 @@
     "tweetnacl": "^1.0.3",
     "typescript": "^7.0.2",
     "vitest": "^5.1.0",
-    "ws": "^8.23.0"
+    "ws": "^8.23.0",
+    "@getpaseo/relay": "0.17.3"
   },
   "repository": {
     "type": "git",

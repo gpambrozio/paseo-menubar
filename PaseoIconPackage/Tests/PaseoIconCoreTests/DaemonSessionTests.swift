@@ -1,4 +1,5 @@
 import Clocks
+import CryptoKit
 import Foundation
 import Testing
 @testable import PaseoIconCore
@@ -55,6 +56,91 @@ struct DaemonSessionTests {
         #expect(h.transport.request.headers == ["Authorization": "Bearer s3cret"])
         #expect(h.transport.request.subprotocols == ["paseo.bearer.s3cret"])
         #expect(h.transport.connectCalls == 1)
+    }
+
+    @MainActor
+    private final class LocalAuthSource {
+        var token = "fixture-local-token-one"
+        var reads = 0
+        func read(url: URL) -> (url: URL, token: String) {
+            reads += 1
+            return (url, token)
+        }
+    }
+
+    @Test("local credential supersedes a saved password and refreshes after reconnect")
+    func localCredentialRefresh() async throws {
+        let source = LocalAuthSource()
+        let alias = try #require(URL(string: "ws://localhost:6767/ws"))
+        let listener = try #require(URL(string: "ws://127.0.0.1:6767/ws"))
+        let h = Harness(password: "outdated-password") {
+            $0.url = alias
+            $0.localCredential = { source.read(url: listener) }
+            $0.localExpectedServerId = "srv-local"
+        }
+        h.session.connect()
+        #expect(h.transport.request.url == listener)
+        #expect(h.transport.request.headers.isEmpty)
+        #expect(h.transport.request.subprotocols.isEmpty)
+        h.transport.simulateOpen()
+        let hello = try jsonObject(try #require(h.transport.sentText.first))
+        #expect(hello["auth"] as? [String: String] == ["kind": "localCredential", "token": source.token])
+        #expect(!h.transport.sentText.joined().contains("outdated-password"))
+        h.transport.simulateText(DaemonWire.serverInfo(serverId: "srv-local"))
+        #expect(h.session.connectionState == .connected)
+        source.token = "fixture-local-token-two"
+        h.transport.simulateClose(code: 1006, reason: "test disconnect")
+        await settle()
+        await h.clock.advance(by: .milliseconds(1500))
+        await settle()
+        try #require(h.factory.transports.count == 2)
+        h.transport.simulateOpen()
+        let secondHello = try jsonObject(try #require(h.transport.sentText.first))
+        #expect(secondHello["auth"] as? [String: String] == ["kind": "localCredential", "token": source.token])
+        #expect(h.transport.request.headers.isEmpty)
+        #expect(source.reads == 2)
+    }
+
+    @Test("a local credential is never requested for remote or relay connections", arguments: [false, true])
+    func localCredentialStaysLocal(relay: Bool) throws {
+        let source = LocalAuthSource()
+        let relayKey = relay ? E2EEBox.exportPublicKey(try E2EEBox.generateKeyPair().publicKey) : nil
+        let h = Harness(e2eeKey: relayKey) {
+            if !relay { $0.url = URL(string: "wss://localhost.example.test/ws")! }
+            let url = $0.url
+            $0.localCredential = { source.read(url: url) }
+        }
+        h.session.connect()
+        h.transport.simulateOpen()
+        #expect(source.reads == 0)
+        #expect(h.transport.request.headers.isEmpty)
+        #expect(!h.transport.sentText.joined().contains(source.token))
+    }
+
+    @Test("a local credential source cannot redirect the connection off loopback")
+    func refusesRemoteLocalCredentialDestination() throws {
+        let remote = try #require(URL(string: "ws://example.test:6767/ws"))
+        let h = Harness {
+            $0.localCredential = { (remote, "fixture-local-token") }
+        }
+        h.session.connect()
+        h.transport.simulateOpen()
+        #expect(h.transport.request.url != remote)
+        #expect(!h.transport.sentText.joined().contains("fixture-local-token"))
+    }
+
+    @Test("local authentication still requires the saved daemon identity before admission")
+    func localDaemonIdentityMismatch() throws {
+        let h = Harness {
+            let url = $0.url
+            $0.localCredential = { (url, "fixture-local-token") }
+            $0.localExpectedServerId = "srv-local"
+        }
+        h.session.connect()
+        h.transport.simulateOpen()
+        h.transport.simulateText(DaemonWire.serverInfo(serverId: "srv-different"))
+        #expect(h.session.securityFailureReason == "Local daemon identity did not match the saved host")
+        #expect(!h.states.contains(.connected))
     }
 
     @Test("dials without auth when there is no password")
@@ -429,6 +515,235 @@ struct DaemonSessionTests {
         h.transport.simulateText(serverInfo)
         #expect(h.session.connectionState == .connected)
         #expect(h.session.lastServerInfo?.serverId == "relayed")
+    }
+
+    @Test(arguments: [
+        ("srv-1", true, "Daemon requires protected endpoint security"),
+        ("wrong", false, "Relay daemon identity did not match the connection offer"),
+        ("", false, "Relay daemon omitted its server identity"),
+    ])
+    func legacyRelayAdmission(serverId: String, protectedSupport: Bool, reason: String) async throws {
+        let daemon = try E2EEBox.generateKeyPair()
+        let h = Harness(e2eeKey: E2EEBox.exportPublicKey(daemon.publicKey)) {
+            $0.e2eeExpectedServerId = "srv-1"
+        }
+        h.session.connect()
+        h.transport.simulateOpen()
+        let first = try jsonObject(try #require(h.transport.sentText.first))
+        let clientKey = try E2EEBox.importPublicKey(base64: try #require(first["key"] as? String))
+        let shared = try E2EEBox.deriveSharedKey(ourSecretKey: daemon.secretKey, peerPublicKey: clientKey)
+        h.transport.simulateText(#"{"type":"e2ee_ready"}"#)
+        let info = #"{"type":"session","message":{"type":"status","payload":{"status":"server_info","serverId":"\#(serverId)","features":{"relayProtectedSecurity":\#(protectedSupport)}}}}"#
+        h.transport.simulateText(Data(try E2EEBox.encrypt(Array(info.utf8), with: shared)).base64EncodedString())
+        #expect(h.session.securityFailureReason == reason)
+        #expect(h.session.lastServerInfo == nil)
+        #expect(!h.states.contains(.connected))
+        await settle()
+        await h.clock.advance(by: .seconds(60))
+        #expect(h.factory.transports.count == 1)
+    }
+
+    @Test(arguments: [false, true])
+    func protectedRequiredBeforeApplicationHello(passwordConfigured: Bool) async throws {
+        let daemon = try E2EEBox.generateKeyPair()
+        let h = Harness(password: passwordConfigured ? "test-password" : nil, e2eeKey: E2EEBox.exportPublicKey(daemon.publicKey)) {
+            $0.e2eeMinimumSecurityMode = passwordConfigured ? .legacy : .protected
+        }
+        h.session.connect()
+        h.transport.simulateOpen()
+        #expect(h.transport.request.headers.isEmpty)
+        #expect(h.transport.request.subprotocols.isEmpty)
+        #expect(!h.transport.request.url.absoluteString.contains("test-password"))
+        h.transport.simulateText(#"{"type":"e2ee_ready"}"#)
+        #expect(h.transport.sent.count == 1)
+        #expect(h.session.securityFailureReason == "Daemon offered only legacy endpoint security")
+        await settle()
+        await h.clock.advance(by: .seconds(60))
+        #expect(h.factory.transports.count == 1)
+    }
+
+    @Test(arguments: [
+        (nil as String?, "password_required", "Password required"),
+        (" test-password ", "incorrect_password", "Incorrect password"),
+    ])
+    func authenticatedRelayRejection(password: String?, rejection: String, reason: String) async throws {
+        let daemon = Curve25519.KeyAgreement.PrivateKey()
+        let publicKey = daemon.publicKey.rawRepresentation.base64EncodedString()
+        let h = Harness(password: password, e2eeKey: publicKey)
+        h.session.connect()
+        h.transport.simulateOpen()
+        #expect(h.transport.sent.count == 1)
+        #expect(!h.transport.sentText.contains { $0.contains("test-password") })
+        let secured = try completeProtectedHandshake(h.transport, daemon: daemon)
+        let clientHello = try #require(h.transport.sent.last)
+        guard case .text(let plaintext) = try secured.open(clientHello) else {
+            Issue.record("Expected application hello")
+            return
+        }
+        let hello = try jsonObject(plaintext)
+        #expect(hello["type"] as? String == "hello")
+        #expect((hello["capabilities"] as? [String: Bool])?["hello_rejection"] == true)
+        if let password {
+            #expect(hello["auth"] as? [String: String] == ["kind": "password", "password": password])
+        } else {
+            #expect(hello["auth"] == nil)
+        }
+        #expect(!h.transport.sentText.contains { $0.contains("test-password") })
+        #expect(h.session.connectionState == .connecting(attempt: 0))
+
+        let message = #"{"type":"hello.rejected","reason":"\#(rejection)","accepts":["password"]}"#
+        h.transport.onFrame?(try secured.seal(.text(message)))
+        #expect(h.session.connectionState == .disconnected(reason: reason))
+        #expect(h.session.securityFailureReason == nil)
+        await settle()
+        await h.clock.advance(by: .seconds(60))
+        #expect(h.factory.transports.count == 1)
+    }
+
+    @Test(arguments: [false, true])
+    func protectedNegotiationRaisesReconnectFloor(tamperedRecord: Bool) async throws {
+        let daemon = Curve25519.KeyAgreement.PrivateKey()
+        let h = Harness(e2eeKey: daemon.publicKey.rawRepresentation.base64EncodedString()) {
+            $0.e2eeExpectedServerId = "srv-1"
+        }
+        var authenticatedModes: [RelaySecurityMode] = []
+        h.session.onSecurityMode = { authenticatedModes.append($0) }
+        h.session.connect()
+        h.transport.simulateOpen()
+        let secured = try completeProtectedHandshake(h.transport, daemon: daemon)
+        #expect(h.session.relaySecurityMode == .protected)
+        #expect(authenticatedModes == [.protected])
+        #expect(h.session.connectionState == .connecting(attempt: 0))
+        #expect(h.session.lastServerInfo == nil)
+        if tamperedRecord {
+            h.transport.onFrame?(try secured.seal(.text(DaemonWire.serverInfo(serverId: "srv-1"))))
+            #expect(h.session.connectionState == .connected)
+            guard case .binary(var record) = try secured.seal(.binary([1, 2, 3])) else {
+                Issue.record("expected a protected binary record")
+                return
+            }
+            record[try #require(record.indices.last)] ^= 1
+            h.transport.onFrame?(.binary(record))
+            #expect(h.session.securityFailureReason == nil)
+            #expect(h.session.connectionState == .disconnected(reason: "Invalid protected relay record"))
+        } else {
+            h.transport.simulateClose(code: 1012, reason: "")
+        }
+        await settle()
+        await h.clock.advance(by: .milliseconds(1500))
+        await settle()
+        try #require(h.factory.transports.count == 2)
+        h.transport.simulateOpen()
+        h.transport.simulateText(#"{"type":"e2ee_ready"}"#)
+        #expect(h.transport.sent.count == 1)
+        #expect(h.session.securityFailureReason == "Daemon offered only legacy endpoint security")
+        await settle()
+        await h.clock.advance(by: .seconds(60))
+        #expect(h.factory.transports.count == 2)
+    }
+
+    @Test
+    func rebuiltHostRequiresProtectedAfterDisconnectBeforeServerInfo() throws {
+        let daemon = Curve25519.KeyAgreement.PrivateKey()
+        let offer = ConnectionOffer(
+            serverId: "srv-1",
+            daemonPublicKeyB64: daemon.publicKey.rawRepresentation.base64EncodedString(),
+            relay: .init(endpoint: "relay.test:443")
+        )
+        let entry = HostEntry.relay(id: "r1", label: nil, offer: offer)
+        let clock = TestClock()
+        let factory = FakeTransportFactory()
+        var persisted: [String] = []
+        let firstPins = RelaySecurityPinStore(persistedIdentities: []) { persisted = $0 }
+        let first = try HostConnection.makeSession(
+            for: entry, clock: clock, relaySecurityPins: firstPins, transportFactory: factory.make
+        )
+        first.connect()
+        let firstSocket = try #require(factory.last)
+        firstSocket.simulateOpen()
+        _ = try completeProtectedHandshake(firstSocket, daemon: daemon)
+        #expect(first.connectionState == .connecting(attempt: 0))
+        #expect(persisted.count == 1)
+        firstSocket.simulateClose(code: 1012, reason: "")
+        first.close()
+
+        let sink = RecordingSink()
+        let reopenedPins = RelaySecurityPinStore(persistedIdentities: persisted) { persisted = $0 }
+        let rebuilt = try HostConnection(
+            entry: entry, sink: sink, clock: clock, relaySecurityPins: reopenedPins, transportFactory: factory.make
+        )
+        defer { rebuilt.close() }
+        let rebuiltSocket = try #require(factory.last)
+        rebuiltSocket.simulateOpen()
+        rebuiltSocket.simulateText(#"{"type":"e2ee_ready"}"#)
+        #expect(sink.statuses.last == .securityRejected)
+        #expect(rebuiltSocket.sent.count == 1)
+    }
+
+    @Test
+    func unauthenticatedProtectedReadyNeverSendsCredentials() async throws {
+        let daemon = Curve25519.KeyAgreement.PrivateKey()
+        let h = Harness(password: "test-password", e2eeKey: daemon.publicKey.rawRepresentation.base64EncodedString())
+        h.session.connect()
+        h.transport.simulateOpen()
+        _ = try completeProtectedHandshake(h.transport, daemon: daemon, tamperReply: true)
+        h.transport.simulateText(#"{"type":"e2ee_ready"}"#)
+        #expect(h.transport.sent.count == 1)
+        #expect(h.session.relaySecurityMode == nil)
+        #expect(h.session.connectionState == .disconnected(reason: "Could not authenticate protected relay handshake"))
+        await settle()
+        await h.clock.advance(by: .seconds(60))
+        #expect(h.factory.transports.count == 1)
+    }
+
+    /// The test daemon's Noise NK responder. It uses independent HKDF plus the
+    /// production record codec to give the fake socket real wire frames.
+    private func completeProtectedHandshake(
+        _ transport: FakeTransport,
+        daemon: Curve25519.KeyAgreement.PrivateKey,
+        tamperReply: Bool = false
+    ) throws -> ProtectedRecordCodec {
+        let hello = try jsonObject(try #require(transport.sentText.first))
+        let envelope = try #require(hello["protected"] as? [String: Any])
+        let encoded = try #require(envelope["message"] as? String)
+        let message = Array(try #require(Data(base64Encoded: encoded)))
+        let clientEphemeral = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: message.prefix(32))
+        let ephemeral = Curve25519.KeyAgreement.PrivateKey()
+        let daemonEphemeral = ephemeral.publicKey.rawRepresentation
+        let protocolName = Data("Noise_NK_25519_ChaChaPoly_SHA256".utf8)
+        var hash = protocolName
+        var chainingKey = protocolName
+        func mixHash(_ data: Data) { hash = Data(SHA256.hash(data: hash + data)) }
+        func deriveKeys(_ secret: Data) -> (Data, SymmetricKey) {
+            let extracted = HMAC<SHA256>.authenticationCode(for: secret, using: SymmetricKey(data: chainingKey))
+            let output = HKDF<SHA256>.expand(pseudoRandomKey: extracted, info: Data(), outputByteCount: 64)
+            let bytes = output.withUnsafeBytes { Data($0) }
+            return (bytes.prefix(32), SymmetricKey(data: bytes.suffix(32)))
+        }
+        mixHash(Data("paseo-relay-e2ee/1".utf8))
+        mixHash(daemon.publicKey.rawRepresentation)
+        mixHash(clientEphemeral.rawRepresentation)
+        let es = try daemon.sharedSecretFromKeyAgreement(with: clientEphemeral).withUnsafeBytes { Data($0) }
+        let (ck1, key1) = deriveKeys(es)
+        chainingKey = ck1
+        var reader = NoiseCipherState(key: key1)
+        let offered = try reader.open(message.dropFirst(32), authenticating: hash)
+        mixHash(Data(message.dropFirst(32)))
+        mixHash(daemonEphemeral)
+        let ee = try ephemeral.sharedSecretFromKeyAgreement(with: clientEphemeral).withUnsafeBytes { Data($0) }
+        let (ck2, key2) = deriveKeys(ee)
+        chainingKey = ck2
+        var writer = NoiseCipherState(key: key2)
+        var reply = try writer.seal(offered, authenticating: hash)
+        if tamperReply, let index = reply.indices.last { reply[index] ^= 1 }
+        let (receive, send) = deriveKeys(Data())
+        let wire = (daemonEphemeral + Data(reply)).base64EncodedString()
+        transport.simulateText(#"{"type":"e2ee_ready","protected":{"v":1,"message":"\#(wire)"}}"#)
+        return ProtectedRecordCodec(
+            sender: NoiseCipherState(key: send),
+            receiver: NoiseCipherState(key: SymmetricKey(data: receive)),
+            binaryCiphertext: true
+        )
     }
 
     @Test("a fatal E2EE frame disconnects the session at once and reconnects after the base delay")

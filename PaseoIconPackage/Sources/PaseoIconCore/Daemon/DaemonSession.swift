@@ -6,8 +6,13 @@ public struct DaemonSessionConfig: Sendable {
     public var clientType: String = "cli"
     public var appVersion: String
     public var password: String? = nil
+    /// Resolves the credential and bound loopback endpoint for each connection.
+    var localCredential: (@MainActor @Sendable () -> (url: URL, token: String)?)? = nil
+    var localExpectedServerId: String? = nil
     /// Set for relay hosts. Wraps the transport in `E2EEChannel`.
     public var e2eeDaemonPublicKeyB64: String? = nil
+    public var e2eeMinimumSecurityMode: RelaySecurityMode? = nil
+    public var e2eeExpectedServerId: String? = nil
     public var capabilities: [String: Bool] = DaemonSession.defaultCapabilities
     public var connectTimeout: Duration = .seconds(15)
     public var reconnectBaseDelay: Duration = .milliseconds(1500)
@@ -72,6 +77,10 @@ public final class DaemonSession {
     public private(set) var connectionState: ConnectionState = .idle
     public private(set) var lastServerInfo: ServerInfo?
     public private(set) var lastError: String?
+    public private(set) var securityFailureReason: String?
+    public private(set) var relaySecurityMode: RelaySecurityMode?
+    /// Reports protected mode as soon as Noise authenticates the daemon key.
+    public var onSecurityMode: ((RelaySecurityMode) -> Void)?
 
     private struct PendingRequest {
         let expectedType: String
@@ -103,6 +112,8 @@ public final class DaemonSession {
     private let transportFactory: TransportFactory
     private let clock: any Clock<Duration>
     private var transport: (any DaemonTransport)?
+    private var activeLocalCredential: String?
+    private var relayMinimumMode: RelaySecurityMode
     private var shouldReconnect = true
     private var reconnectAttempt = 0
     private var connectTimeoutTask: Task<Void, Never>?
@@ -119,6 +130,8 @@ public final class DaemonSession {
         self.config = config
         self.transportFactory = transportFactory
         self.clock = clock
+        let hasRelayPassword = config.e2eeDaemonPublicKeyB64 != nil && config.password?.isEmpty == false
+        relayMinimumMode = hasRelayPassword ? .protected : config.e2eeMinimumSecurityMode ?? .legacy
     }
 
     // MARK: - Lifecycle
@@ -209,23 +222,32 @@ public final class DaemonSession {
 
         var headers: [String: String] = [:]
         var subprotocols: [String] = []
-        if let password = config.password?.trimmingCharacters(in: .whitespacesAndNewlines), !password.isEmpty {
+        var url = config.url
+        activeLocalCredential = nil
+        if config.e2eeDaemonPublicKeyB64 == nil,
+           LocalDaemonCredentialStore.isLoopbackWebSocketURL(url),
+           let credential = config.localCredential?(),
+           LocalDaemonCredentialStore.isLoopbackWebSocketURL(credential.url) {
+            url = credential.url
+            activeLocalCredential = credential.token
+        }
+        if config.e2eeDaemonPublicKeyB64 == nil,
+           activeLocalCredential == nil,
+           let password = config.password?.trimmingCharacters(in: .whitespacesAndNewlines), !password.isEmpty {
             headers["Authorization"] = "Bearer \(password)"
             subprotocols = ["paseo.bearer.\(password)"]
         }
 
         disposeTransport(code: 1001, reason: "Reconnecting")
-        let base = transportFactory(TransportRequest(url: config.url, headers: headers, subprotocols: subprotocols))
+        relaySecurityMode = nil
+        securityFailureReason = nil
+        let base = transportFactory(TransportRequest(url: url, headers: headers, subprotocols: subprotocols))
         let transport: any DaemonTransport
         if let key = config.e2eeDaemonPublicKeyB64 {
             do {
-                transport = try E2EEChannel(base: base, daemonPublicKeyB64: key, clock: clock)
+                transport = try E2EEChannel(base: base, daemonPublicKeyB64: key, clock: clock, minimumMode: relayMinimumMode)
             } catch {
-                // An offer with a malformed key can never connect; retrying it
-                // behind backoff forever is the failure mode to avoid.
-                shouldReconnect = false
-                lastError = "Invalid daemon public key: \(error)"
-                setState(.disconnected(reason: "Invalid daemon public key"))
+                rejectConnection("Invalid daemon public key", securityFailure: true)
                 return
             }
         } else {
@@ -239,7 +261,10 @@ public final class DaemonSession {
         transport.onOpen = { [weak self] in self?.handleTransportOpen() }
         transport.onFrame = { [weak self] frame in self?.handleFrame(frame) }
         transport.onClose = { [weak self] close in self?.handleTransportClose(close) }
-        transport.onError = { [weak self] message in self?.lastError = message }
+        transport.onError = { [weak self] message in
+            guard let self else { return }
+            self.lastError = self.config.e2eeDaemonPublicKeyB64 == nil ? message : "Relay transport error"
+        }
         transport.connect()
     }
 
@@ -260,14 +285,38 @@ public final class DaemonSession {
     }
 
     private func handleTransportOpen() {
+        guard let transport else { return }
+        let relay = transport as? E2EEChannel
+        relaySecurityMode = relay?.securityMode
+        if relaySecurityMode == .protected {
+            relayMinimumMode = .protected
+            onSecurityMode?(.protected)
+            guard self.transport === transport else { return }
+        }
+        var capabilities = config.capabilities
+        var auth: HelloMessage.Auth?
+        if relay == nil, let activeLocalCredential {
+            capabilities["hello_rejection"] = true
+            auth = .localCredential(activeLocalCredential)
+        } else if relay != nil {
+            capabilities["hello_rejection"] = true
+            if let password = config.password, !password.isEmpty {
+                guard relaySecurityMode == .protected else {
+                    rejectConnection("Protected relay security is required for password authentication", securityFailure: true)
+                    return
+                }
+                auth = .password(password)
+            }
+        }
         let hello = HelloMessage(
             clientId: config.clientId,
             clientType: config.clientType,
             protocolVersion: 1,
             appVersion: config.appVersion,
-            capabilities: config.capabilities
+            capabilities: capabilities,
+            auth: auth
         )
-        guard let transport, let data = try? JSONEncoder().encode(hello) else {
+        guard let data = try? JSONEncoder().encode(hello) else {
             scheduleReconnect(reason: "Failed to send hello message")
             return
         }
@@ -275,6 +324,16 @@ public final class DaemonSession {
     }
 
     private func handleTransportClose(_ close: TransportClose) {
+        if let relay = transport as? E2EEChannel {
+            if let securityFailure = relay.securityFailureReason {
+                rejectConnection(securityFailure, securityFailure: true)
+                return
+            }
+            let described = relay.localCloseReason ?? "Relay transport closed (code \(close.code))"
+            lastError = described
+            scheduleReconnect(reason: described)
+            return
+        }
         let reason = close.reason.trimmingCharacters(in: .whitespacesAndNewlines)
         let described = reason.isEmpty ? "Transport closed (code \(close.code))" : reason
         lastError = described
@@ -287,15 +346,41 @@ public final class DaemonSession {
         let message: InboundMessage
         do {
             message = try InboundParser.parse(text)
-        } catch {
-            lastError = "Message validation failed: \(error)"
+        } catch InboundParseError.missingServerIdentity where config.e2eeDaemonPublicKeyB64 != nil || activeLocalCredential != nil {
+            let kind = config.e2eeDaemonPublicKeyB64 == nil ? "Local" : "Relay"
+            rejectConnection("\(kind) daemon omitted its server identity", securityFailure: true)
             return
+        } catch {
+            lastError = config.e2eeDaemonPublicKeyB64 == nil ? "Message validation failed: \(error)" : "Invalid relay session message"
+            return
+        }
+        if config.e2eeDaemonPublicKeyB64 != nil || activeLocalCredential != nil, connectionState != .connected {
+            switch message {
+            case .serverInfo, .helloRejected: break
+            default: return
+            }
         }
         consecutiveLivenessFailures = 0
         switch message {
         case .pong:
             pingProbe?.settle(true)
         case .serverInfo(let info):
+            if activeLocalCredential != nil, let expectedId = config.localExpectedServerId,
+               expectedId != info.serverId {
+                rejectConnection("Local daemon identity did not match the saved host", securityFailure: true)
+                return
+            }
+            if config.e2eeDaemonPublicKeyB64 != nil {
+                guard let relaySecurityMode else { return }
+                if let expectedId = config.e2eeExpectedServerId, expectedId != info.serverId {
+                    rejectConnection("Relay daemon identity did not match the connection offer", securityFailure: true)
+                    return
+                }
+                if relaySecurityMode == .legacy, info.relayProtectedSecurity {
+                    rejectConnection("Daemon requires protected endpoint security", securityFailure: true)
+                    return
+                }
+            }
             lastServerInfo = info
             if case .connecting = connectionState {
                 connectTimeoutTask?.cancel()
@@ -304,6 +389,9 @@ public final class DaemonSession {
                 setState(.connected)
                 startLiveness()
             }
+        case .helloRejected(let rejection):
+            guard case .connecting = connectionState else { return }
+            rejectConnection(rejection.description)
         case .agentUpdate(let update):
             for listener in agentListeners.values { listener(update) }
         case .workspaceUpdate(let update):
@@ -324,6 +412,13 @@ public final class DaemonSession {
     }
 
     // MARK: - Reconnect
+
+    private func rejectConnection(_ reason: String, securityFailure: Bool = false) {
+        shouldReconnect = false
+        if securityFailure { securityFailureReason = reason }
+        lastError = reason
+        scheduleReconnect(reason: reason)
+    }
 
     private func scheduleReconnect(reason: String?) {
         guard connectionState != .disposed else { return }
